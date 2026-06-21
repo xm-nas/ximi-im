@@ -1,4 +1,4 @@
-# 💬 ximi IM(希米密聊软件)
+# 💬 ximi IM(希米密聊)
 
 <p align="center">
    <img src="https://img.shields.io/badge/Version-v1.01-blue.svg?style=flat-square" alt="Version">
