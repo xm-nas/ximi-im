@@ -114,6 +114,7 @@ chmod 666 blacklist.json
 ├── index.html        # 前台 IM 交互界面
 ├── web.js            # 前端Mobile页面相关加密算法库
 ├── ximi.js           # 前端pc页面相关加密算法库
+├── crypto-js.min.js  # 前端AES加密库
 ├── uploads/          # 加密文件缓冲目录 (自动生成并清理)
 ├── blacklist.json    # 动态 IP 防御黑名单
 └── README.md         # 项目文档
