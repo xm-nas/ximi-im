@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Ximi IM</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="crypto-js.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsencrypt/3.3.2/jsencrypt.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; height: calc(var(--vh, 1vh) * 100); overflow: hidden; position: relative; }
+        ::-webkit-scrollbar { width: 5px; height: 5px; }
+        ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.3); }
+        .hidden { display: none !important; }
+
+        /* ================= PC 端核心样式 ================= */
+        .pc-bg { background: #e3e3e3; }
+        .wechat-window {
+            position: absolute; width: 1050px; height: 750px; background: #f5f5f5; border-radius: 8px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2); display: flex; overflow: hidden; border: 1px solid #d6d6d6;
+            left: 50%; top: 50%; transform: translate(-50%, -50%);
+        }
+        .sidebar { width: 65px; background: #ccccd0; display: flex; flex-direction: column; align-items: center; padding: 15px 0; justify-content: space-between; position: relative; }
+        .window-controls { display: flex; gap: 6px; cursor: move; width: 100%; justify-content: center; padding-bottom: 15px; }
+        .dot { width: 10px; height: 10px; border-radius: 50%; } .dot.red { background: #ff5f56; } .dot.yellow { background: #ffbd2e; } .dot.green { background: #27c93f; }
+        .menu-items { display: flex; flex-direction: column; gap: 16px; align-items: center; width: 100%; flex: 1; padding-top: 10px; }
+        .menu-icon { font-size: 20px; cursor: pointer; opacity: 0.6; transition: opacity 0.2s, background 0.2s; width: 42px; height: 42px; display: flex; align-items: center; justify-content: center; border-radius: 6px; }
+        .menu-icon:hover, .menu-icon.active { opacity: 1; background: rgba(255,255,255,0.1); }
+        .menu-icon.active { color: #3b82f6; background: #86c8a7; }
+        .chat-list-panel { width: 260px; background: #e6e6e6; border-right: 1px solid #dcdcdc; display: flex; flex-direction: column; }
+        .search-bar-container { height: 60px; padding: 20px 12px 10px 12px; display: flex; gap: 8px; align-items: center; cursor: move; }
+        .user-item { display: flex; align-items: center; gap: 10px; padding: 12px 12px; cursor: pointer; transition: background-color 0.2s; border-bottom: 1px solid rgba(0,0,0,0.03); }
+        .user-item:hover { background-color: #dadada; } .user-item.active { background-color: #0bae6a !important; }
+        .main-chat-panel { flex: 1; background: #f5f5f5; display: flex; flex-direction: column; }
+        .chat-header { height: 60px; padding: 0 20px; border-bottom: 1px solid #e5e5e5; display: flex; justify-content: space-between; align-items: center; cursor: move; }
+        .wechat-popup-menu { position: absolute; left: 62px; bottom: 2px; background: #ebebee; border-radius: 6px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4); z-index: 100; width: 168px; padding: 6px 0; border: 1px solid #c5c5c8; }
+        .wechat-popup-menu::before { content: ""; position: absolute; left: -6px; bottom: 14px; width: 0; height: 0; border-top: 6px solid transparent; border-bottom: 6px solid transparent; border-right:6px solid #ebebee; }
+        .menu-row { padding: 9px 16px; color: #2d2d2d; font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 8px; transition: background 0.15s, color 0.15s; }
+        .menu-row:hover { background: #0bae6ae8; color: #fff; } .menu-row.danger:hover { background: #ef4444; color: #fff; }
+        .menu-select { background: #0bae6a; color: #fff; font-size: 11px; border: 1px solid #444; border-radius: 4px; padding: 2px 4px; outline: none; cursor: pointer; }
+        .btn-premium-pull { background: #f3f4f6; color: #4b5563; border: 1px solid #d1d5db; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
+        .btn-premium-pull:hover { background: #e5e7eb; color: #1f2937; border-color: #9ca3af; }
+        .btn-premium-send { background: #1296db; color: white; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); box-shadow: 0 2px 6px rgba(18, 150, 219, 0.25); }
+        .btn-premium-send:hover { background: #1085c4; box-shadow: 0 4px 12px rgba(18, 150, 219, 0.4); } .btn-premium-send:active { transform: scale(0.97); }
+
+  @media (max-width:1080px){#pc-wrapper{display:none!important}
+#m-wrapper{display:block!important}
+}
+@media (min-width:1081px){#pc-wrapper{display:block!important}
+#m-wrapper{display:none!important}
+}
+#m-wrapper{height:100svh;display:flex;flex-direction:column;overflow:hidden}
+.m-chat-header{height:60px;flex-shrink:0;position:sticky;top:0;z-index:100}
+
+.m-input-area{height:auto;flex-shrink:0;position:fixed;bottom:0;left:0;width:100%;z-index:100;padding-bottom:env(safe-area-inset-bottom)}
+.m-msg-area{flex:1;overflow-y:auto;padding-top:60px;padding-bottom:80px}
+
+
+        .m-bg { background: #ededed; }
+        .m-header { height: 50px; background: linear-gradient(180deg, #1cbb4f 0%, #19a64b 100%); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 17px; font-weight: 500; letter-spacing: 0.5px; position: absolute; top: 0; left: 0; right: 0; z-index: 10; box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
+        .m-container { position: absolute; top: 50px; bottom: 55px; left: 0; right: 0; overflow: hidden; }
+        .m-page { display: none; height: 100%; overflow-y: auto; background: #ededed; }
+        .m-page.active { display: block; }
+        .m-tabbar { position: absolute; bottom: 0; left: 0; right: 0; height: 55px; background: #f7f7f7; border-top: 1px solid #ddd; display: flex; padding-bottom: env(safe-area-inset-bottom); z-index: 10; }
+        .m-tab { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 10px; color: #1a1a1a; cursor: pointer; transition: color 0.1s; }
+        .m-tab.active { color: #07c160; }
+        .m-tab .m-icon { font-size: 22px; margin-bottom: 2px; }
+        .m-chat-item { background: #fff; display: flex; align-items: center; padding: 12px 15px; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
+        .m-chat-item:active { background: #e5e5e5; }
+        .m-avatar { width: 44px; height: 44px; border-radius: 4px; background: #1296db; color: white; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: bold; flex-shrink: 0; margin-right: 12px; }
+        
+        /* 移动端聊天窗口覆盖层 */
+        .m-chat-window-overlay { position: fixed; inset: 0; background: #ededed; z-index: 50; display: flex; flex-direction: column; transform: translateX(100%); transition: transform 0.25s ease-out; }
+        .m-chat-window-overlay.show { transform: translateX(0); }
+ 
+ /*.m-chat-header{display:flex;flex-direction:row!important;align-items:center;justify-content:space-between;width:100%;border-bottom:1px solid #f7f7f7}
+*/
+.m-chat-header {
+    display: flex;
+    flex-direction: row !important;
+    width: 100%;
+    border-bottom: 1px solid #f7f7f7;
+    flex-wrap: nowrap;
+    align-items: center;
+}
+.m-msg-area{display:flex;flex-direction:column;flex-wrap:nowrap}
+.m-bubble{display:inline-block;white-space:normal;word-wrap:break-word;max-width:70%;flex-shrink:0}
+.m-chat-back{font-size:16px;margin-right:15px;cursor:pointer;color:#1a1a1a;display:flex;align-items:center;gap:4px}
+.m-input-area{position:fixed;bottom:0;left:0;width:100%;background:#f7f7f7;border-top:1px solid #e5e5e5;padding:8px 12px;display:flex;align-items:flex-end;gap:10px;padding-bottom:calc(8px + env(safe-area-inset-bottom));z-index:100}
+.m-msg-area{flex:1;overflow-y:auto;padding:1px;padding-bottom:80px}
+
+        .m-input-box { flex: 1; background: #fff; border-radius: 4px; min-height: 36px; max-height: 100px; padding: 8px; font-size: 15px; outline: none; border: 1px solid #e5e5e5; resize: none; }
+        .m-send-btn { background: #07c160; color: white; border: none; border-radius: 4px; padding: 0 16px; height: 36px; font-size: 14px; font-weight: 500; transition: background 0.1s; }
+        .m-send-btn:active { background: #06ad56; }
+        
+        /* 移动端气泡 */
+        .m-bubble-wrap { display: flex; margin-bottom: 16px; width: 100%; }
+        .m-bubble-wrap.me { flex-direction: row-reverse; }
+        .m-bubble { max-width: 70%; padding: 10px 14px; border-radius: 5px; font-size: 15px; word-break: break-all; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+        .m-bubble-wrap.them .m-bubble { background: #fff; color: #000; margin-left: 10px; border-top-left-radius: 5px; }
+        .m-bubble-wrap.me .m-bubble { background: #95ec69; color: #000; margin-right: 10px; border-top-right-radius: 5px; }
+
+.m-bubble-wrap{display:flex;flex-direction:row;margin:10px;max-width:100%}
+.m-bubble-wrap.me{padding-right:10px}
+.m-bubble-wrap.them{align-items:flex-start}
+.m-msg-nickname{font-size:11px;color:#999;margin-bottom:2px}
+.m-bubble{position:relative;padding:8px 12px;border-radius:8px;font-size:15px;line-height:1.4;word-break:break-all}
+.m-bubble::before{content:"";position:absolute;top:10px;width:0;height:0;border-style:solid}
+.me .m-bubble{background-color:#95ec69}
+.me .m-bubble::before{right:-6px;border-width:5px 0 5px 6px;border-color:transparent transparent transparent #95ec69}
+.them .m-bubble{background-color:#fff}
+.them .m-bubble::before{left:-6px;border-width:5px 6px 5px 0;border-color:transparent #fff transparent transparent}
+
+
+/* 微信 Action Sheet 上滑动画补丁 */
+@keyframes slideUp {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
+}
+#m-action-sheet:not(.hidden) > div {
+    animation: slideUp 0.25s cubic-bezier(0.1, 1, 0.1, 1) forwards;
+}
+
+span.tool-icon {
+     padding: 6px 5px 5px 7px;
+     border-radius: 1px;
+}
+span.tool-icon:hover {
+    background: #ccccd0;
+    /* padding: 5px 5px 5px 5px; */
+    /* border-radius: 4px; */
+}
+label.ll2:hover {
+    cursor: pointer;
+}
+
+    </style>
+</head>
+<body class="bg-gray-100 md:pc-bg">
+
+    <div id="pc-wrapper" class="w-full h-full relative block">
+        <div class="wechat-window" id="wechatWindow">
+            <div class="sidebar drag-handle">
+                <div class="w-full flex flex-col items-center">
+                    <div class="window-controls">
+                        <div class="dot red"></div><div class="dot yellow"></div><div class="dot green"></div>
+                    </div>
+                    <div class="w-9 h-9 bg-gray-600 text-white flex items-center justify-center font-bold rounded-lg mb-4 text-sm shadow border border-gray-700" id="avatarBox">🔒</div>
+                    <div class="menu-items">
+                        <div class="menu-icon active" id="menuBtnChat" onclick="showChatList()" title="聊天记录">💬</div>
+                        <div class="menu-icon text-gray-400" id="menuBtnContact" onclick="showContactList()" title="通讯录">👤</div>
+                        <div class="menu-icon text-gray-400" id="logToggleBtn" onclick="toggleLogConsole(event)" title="实时调试日志">📜</div>
+                    </div>
+                </div>
+                <div class="w-full px-2 flex flex-col items-center relative gap-1">
+                   <div id="netSpeedIndicator" class="group flex flex-col items-center justify-center text-[9px] font-mono font-bold text-green-500 transition-all duration-300 transform hover:scale-110 cursor-pointer" title="宿主网络双向延迟检测">
+                        <span class="text-[8px] animate-pulse mb-0.5">●</span>
+                        <span id="latencyVal">0ms</span>
+                    </div>
+                    <div class="menu-icon text-gray-400 text-sm mt-1" onclick="toggleWechatMenu(event)" title="系统设置">⚙️</div>
+                    <div id="wechatSettingsMenu" class="wechat-popup-menu hidden">
+
+  
+<div class="menu-row flex items-center justify-between gap-2"
+     onclick="event.stopPropagation();">
+
+    <!-- 左侧：图标 + 文本 -->
+    <div class="flex items-center gap-2 min-w-0">
+        <svg xmlns="http://www.w3.org/2000/svg"
+             viewBox="0 0 24 24"
+             fill="none"
+             stroke="currentColor"
+             stroke-width="2"
+             stroke-linecap="round"
+             stroke-linejoin="round"
+             class="w-4 h-4 text-gray-500 flex-shrink-0">
+
+            <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
+            <path d="M21 3v5h-5"></path>
+            <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
+            <path d="M8 16H3v5"></path>
+        </svg>
+
+        <span class=" leading-none">
+            自动接收
+        </span>
+    </div>
+
+    <!-- 右侧：select -->
+                            <select id="autoPullInterval" onchange="toggleAutoPull()" class="menu-select">
+                                <option value="0">手动</option><option value="500">0.5s</option>
+                                <option value="1000">1s</option><option value="3000">3s</option><option value="5000">5s</option>
+                            </select>
+
+</div>
+
+
+
+                         <div class="menu-row flex items-center justify-start gap-2 leading-none" onclick="pcOpenMsgManager(); closeWechatMenu();"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="folder" aria-hidden="true" class="lucide lucide-folder w-4 h-4 text-gray-500"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg> 消息记录管理</div>
+                        <div class="menu-row flex items-center justify-start gap-2 leading-none" onclick="document.getElementById('apiPopover').classList.toggle('hidden'); closeWechatMenu();"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="globe" aria-hidden="true" class="lucide lucide-globe w-4 h-4 text-gray-500"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path><path d="M2 12h20"></path></svg> 路由设置</div>
+                        <div class="menu-row flex items-center justify-start gap-2 leading-none" onclick="exportIdentityKeys(); closeWechatMenu();"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="download" aria-hidden="true" class="lucide lucide-download w-4 h-4 text-gray-500"><path d="M12 15V3"></path><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="m7 10 5 5 5-5"></path></svg> 导出密钥</div>
+                        <div class="menu-row flex items-center justify-start gap-2 leading-none" onclick="triggerKeyImport(); closeWechatMenu();"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="upload" aria-hidden="true" class="lucide lucide-upload w-4 h-4 text-gray-500"><path d="M12 3v12"></path><path d="m17 8-5-5-5 5"></path><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path></svg> 导入密钥</div>
+                        <div id="logoutMenuRow" class="menu-row hidden text-orange-400 border-t border-green-500 mt-1  flex items-center justify-start gap-2 leading-none" onclick="handleLogout(); closeWechatMenu();"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="log-out" aria-hidden="true" class="lucide lucide-log-out w-4 h-4 text-red-500"><path d="m16 17 5-5-5-5"></path><path d="M21 12H9"></path><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path></svg> 注销当前身份</div>
+                        <div class="border-t border-green-500 my-1 border-t-[1px] mt-1 mb-1 " ></div>
+                        <div class="menu-row danger text-red-400  flex items-center justify-start gap-2 leading-none" onclick="resetSystem(); closeWechatMenu();"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="alert-triangle" aria-hidden="true" class="lucide lucide-alert-triangle w-4 h-4 text-red-600"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg> 系统重置</div>
+                    </div>
+                    <div id="apiPopover" class="hidden absolute left-[75px] bottom-12 bg-white p-3 rounded-xl shadow-xl border border-gray-200 z-50 w-64">
+                        <p class="text-xs font-bold text-gray-500 mb-1">后端 API 路由节点：</p>
+                        <input type="text" id="apiUrl" class="w-full text-xs p-2 bg-gray-50 border rounded-lg font-mono" value="https://app.hhqq.net/api.php">
+                    </div>
+                    <input type="file" id="importKeyInput" accept=".json" class="hidden" onchange="handleKeyImport(event)">
+                </div>
+            </div>
+
+            <div class="chat-list-panel">
+                <div class="search-bar-container drag-handle">
+                    <input type="text" id="receiverInput" list="receiverDataList" oninput="handleReceiverInput()" class="w-full h-7 bg-gray-300 border-none rounded-md px-2 text-xs outline-none text-gray-800" placeholder="搜索或指定接收者 ID/昵称">
+                    <datalist id="receiverDataList"></datalist>
+                </div>
+                <div class="flex-1 overflow-y-auto p-1 space-y-0.5" id="userListContainer">
+                    <div class="text-center text-xs text-gray-400 py-8">等待身份验证加载名册...</div>
+                </div>
+            </div>
+
+            <div class="main-chat-panel">
+                <div class="chat-header drag-handle" id="chatTitle">
+                    <div class="flex-1 flex flex-col">
+                        <span class="text-sm font-bold text-gray-800" id="currentChatNode">Ximi IM</span>
+                        <span class="text-[11px] text-green-600" id="cryptoStateHint">非对称端到端加密防护中 (RSA-2048 / AES-CBC)</span>
+                    </div>
+                    <div class="text-xs text-gray-400 font-mono" id="senderIdentityNode">未认证</div>
+                </div>
+
+                <div class="flex-1 flex overflow-hidden bg-gray-50 relative" id="chatMainContent">
+                    <div class="flex-1 flex flex-col overflow-hidden border-r border-gray-200 h-full">
+                        <div id="authSection" class="p-4 bg-white border-b border-gray-200 space-y-3">
+                            <div class="flex items-center gap-1.5 text-xs font-bold text-gray-700 mb-1">🔑 鉴权网关</div>
+                            <div class="grid grid-cols-2 gap-2">
+                                <input type="text" id="username" placeholder="用户名" class="p-2 border rounded-lg text-xs bg-gray-50">
+                                <input type="password" id="password" placeholder="密码" class="p-2 border rounded-lg text-xs bg-gray-50">
+                            </div>
+                            <input type="text" id="nickname" placeholder="昵称 (选填)" class="w-full p-2 border rounded-lg text-xs bg-gray-50">
+                            <div class="flex gap-2">
+                                <button onclick="handleRegister()" class="flex-1 text-xs bg-gray-800 text-white py-2 rounded-lg hover:bg-gray-900 transition">建立全新身份 (注册)</button>
+                                <button onclick="handleLogin()" class="flex-1 text-xs bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition">载入安全密钥 (登录)</button>
+                            </div>
+                        </div>
+
+                        <div class="flex-1 p-4 overflow-y-auto space-y-3" id="chatBox">
+                            <div class="text-center text-[11px] text-gray-400 my-1">🛡️ 聊天及流媒体数据均进行本地非对称离线解密，不留存明文于宿主服务器</div>
+                        </div>
+
+                        <div class="p-3 bg-purple-50 border-t border-purple-200 max-h-36 overflow-y-auto" id="fileContainer" style="display: none;">
+                            <div class="text-xs font-bold text-purple-900 mb-1 flex items-center gap-1" >📂 物理待解密分片清单</div>
+                            <div id="fileList" class="space-y-1.5"><div class="text-[11px] text-purple-400 italic">暂无流式缓冲分片。</div></div>
+                        </div>
+
+
+                    </div>
+
+                    <div class="w-80 flex flex-col bg-gray-900 h-full overflow-hidden transition-all duration-200" id="logConsolePanel">
+                        <div class="p-2 bg-gray-950 border-b border-gray-800 flex justify-between items-center px-4">
+                            <span class="text-gray-500 text-[10px] font-mono tracking-widest">DEBUG METRIC PANEL</span>
+                            <button onclick="document.getElementById('logConsole').innerText=''" class="text-gray-500 text-[10px] hover:text-white transition">CLEAR</button>
+                        </div>
+                        <div id="logConsole" class="flex-1 p-3 text-emerald-400 font-mono text-[10px] overflow-y-auto leading-relaxed select-text">
+                            System pipeline initialized. Ready for keys injection...
+                        </div>
+                    </div>
+                </div>
+
+                <div class="h-36 border-t border-gray-200 flex flex-col bg-white" id="chatInputArea">
+       
+<div class="h-8 px-4 flex items-center gap-4 border-b border-gray-100 bg-gray-50">
+   <!--
+
+<div class="toolbar">
+                    <span class="tool-icon">☺</span>
+                    <span class="tool-icon">📁</span>
+                    <span class="tool-icon">✂</span>
+                    <span class="tool-icon">🎙</span>
+                </div>
+
+ -->
+   
+   
+<!-- 
+    <label class="cursor-pointer text-sm flex items-center gap-1 text-gray-500 hover:text-purple-600 transition" title="全量分片加密上传">
+        📁 <span class="text-xs font-medium">加密传输文件</span>
+        <input type="file" id="fileInput" class="hidden" onchange="updateFileIndicator(this)">
+    </label>
+
+    <span id="fileIndicator" class="text-[11px] text-gray-400 max-w-xs truncate"></span>
+    <button id="uploadFileBtn" onclick="sendEncryptedFile()" class="hidden bg-purple-600 text-white text-[10px] px-2 py-0.5 rounded hover:bg-purple-700">确认分片外发</button>
+    
+    <div class="ml-auto">
+        <button onclick="pcClearServerQueue()" class="text-[11px] font-bold text-red-500 border border-red-200 bg-red-50 hover:bg-red-500 hover:text-white px-2 py-1 rounded transition shadow-sm" title="销毁服务器上等待发送给我的残存消息">
+            🧹 清空云端接收队列
+        </button>
+    </div>
+-->
+
+<div class="toolbar">
+                    
+                    <span class="tool-icon">
+                         <label class="ll2" style="    padding: 0px 0px 0px 5px;" title="全量分片加密传输文件">📁<input type="file" id="fileInput" class="hidden" onchange="updateFileIndicator(this)"></label>
+                    </span>
+
+
+                    <span class="tool-icon">        <button onclick="pcClearServerQueue()" class="" title="销毁服务器上等待发送给我的残存消息">
+            <span class="tool-icon">✂</span>
+        </button></span>
+                      <span id="fileIndicator" class="text-[11px] text-gray-400 max-w-xs truncate" style="
+    color: #1718e6;
+"></span>
+    <button id="uploadFileBtn" onclick="sendEncryptedFile()" class="hidden bg-purple-600 text-white text-[10px] px-2 py-0.5 rounded hover:bg-purple-700" style="
+    background-color: rgb(25 162 75);
+">确认加密发送</button>
+
+     </div>
+
+
+
+
+
+
+</div>
+
+                    <div class="flex-1 flex p-2 gap-2">
+                        <input type="text" id="senderNickname" readonly class="hidden" value="请先登录">
+                        <textarea id="msgText" class="flex-1 border-none resize-none outline-none text-xs p-1 text-gray-800 font-sans" placeholder="输入高级流媒体端到端加密报文..."></textarea>
+                        <div class="flex items-end gap-2 pb-1 pr-1">
+                            <button onclick="pullMessages()" class="btn-premium-pull text-xs px-3.5 py-2 rounded-md font-medium shadow-sm flex items-center gap-1" title="同步最新流密文"><span>🔄 接收</span></button>
+                            <button onclick="sendEncryptedText()" class="btn-premium-send text-xs px-5 py-2 rounded-md font-bold shadow-sm">发送</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="userInfoPanel" class="hidden flex flex-col items-center justify-center bg-black/40 h-full w-full absolute inset-0 z-[2000]" onclick="this.classList.add('hidden')">
+            <div class="bg-white p-8 rounded-xl shadow-2xl text-center w-80 space-y-4 relative animate-[fadeIn_0.2s_ease-out]" onclick="event.stopPropagation()">
+                <button class="absolute top-2 right-4 text-gray-400 hover:text-gray-600 text-xl font-sans" onclick="document.getElementById('userInfoPanel').classList.add('hidden')">✕</button>
+                <div id="infoAvatar" class="w-20 h-20 bg-blue-600 text-white rounded-xl flex items-center justify-center text-3xl font-bold mx-auto shadow-sm">U</div>
+                <div><h3 id="infoNickname" class="text-xl font-bold text-gray-800">用户昵称</h3><p id="infoUid" class="text-sm text-gray-400 font-mono mt-1">UID: --</p></div>
+                <div class="pt-4 border-t border-gray-100">
+                    <button id="infoChatBtn" class="w-full bg-[#1296db] hover:bg-[#1085c4] text-white font-medium py-2.5 rounded-lg transition shadow-sm text-sm">发消息</button>
+                </div>
+            </div>
+        </div>
+
+
+<div id="pcMsgManagerModal" class="hidden absolute inset-0 z-[3000] flex items-center justify-center bg-black/40" onclick="pcCloseMsgManager()">
+    <div class="bg-[#f5f5f5] w-[450px] max-h-[70%] rounded-lg shadow-2xl flex flex-col overflow-hidden border border-gray-300" onclick="event.stopPropagation()">
+        <div class="px-4 py-3 border-b border-gray-200 flex justify-between items-center bg-[#e6e6e6]">
+            <span class="font-bold text-sm text-gray-800">本地消息缓存管理 (PC端)</span>
+            <button onclick="pcCloseMsgManager()" class="text-gray-500 hover:text-red-500">✕</button>
+        </div>
+        <div class="p-3 flex-1 overflow-y-auto bg-white" id="pcMsgManagerList">
+            </div>
+        <div class="px-4 py-3 border-t border-gray-200 bg-[#e6e6e6] flex justify-end gap-3">
+            <button onclick="pcExportSelectedMsgs()" class="px-4 py-1.5 text-xs bg-[#1296db] text-white rounded hover:bg-[#1085c4] transition">导出选中记录</button>
+            <button onclick="pcDeleteSelectedMsgs()" class="px-4 py-1.5 text-xs bg-red-500 text-white rounded hover:bg-red-600 transition">删除选中记录</button>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+
+
+
+    </div>
+
+    <div id="m-wrapper" class="block md:hidden w-full h-full relative m-bg overflow-hidden">
+        
+        <div class="m-header" id="m-headerTitle">聊天</div>
+
+        <div id="m-auth-page" class="absolute inset-0 bg-[#ededed] z-[60] flex flex-col justify-center px-6 transition-transform duration-300">
+            <div class="text-center mb-10 text-3xl font-bold text-green-600">Ximi IM</div>
+            <div class="bg-white p-6 rounded-xl shadow-sm space-y-4">
+                <input type="text" id="m-username" placeholder="账号" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-lg text-sm outline-none">
+                <input type="password" id="m-password" placeholder="密码" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-lg text-sm outline-none">
+                <input type="text" id="m-nickname" placeholder="昵称 (仅注册需填)" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-lg text-sm outline-none">
+                <div class="pt-2 flex gap-3">
+                    <button onclick="mRegister()" class="flex-1 bg-gray-800 text-white py-3 rounded-lg text-sm font-medium">注册</button>
+                    <button onclick="mLogin()" class="flex-1 bg-[#07c160] text-white py-3 rounded-lg text-sm font-medium">安全登录</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="m-container" id="m-main-container">
+            <div class="m-page active" id="m-page-msg">
+                </div>
+
+            <div class="m-page" id="m-page-contact">
+                </div>
+
+            <div class="m-page" id="m-page-settings">
+
+                <div class="mt-4 bg-white border-y border-gray-200">
+    <div class="m-chat-item justify-between" onclick="mOpenMsgManager()">
+        <span class="text-[15px] font-medium text-gray-800">📁 离线消息记录管理</span>
+        <span class="text-gray-400">›</span>
+    </div>
+</div>
+
+<!--    
+                手机端 (在 #m-page-settings 内部和 #m-wrapper 内部添加)：
+
+<div class="mt-4 bg-white border-y border-gray-200">
+    <div class="m-chat-item justify-between" onclick="mOpenMsgManager()">
+        <span class="text-[15px] font-medium text-gray-800">📁 离线消息记录管理</span>
+        <span class="text-gray-400">›</span>
+    </div>
+</div>
+
+<div id="m-msg-manager-page" class="m-chat-window-overlay" style="z-index: 150;">
+    <div class="m-chat-header">
+        <div class="m-chat-back" onclick="mCloseMsgManager()">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"></polyline></svg>返回
+        </div>
+        <div class="flex-1 text-center font-bold mr-6">消息管理 (移动端)</div>
+    </div>
+    <div class="m-msg-area" id="m-msg-manager-list" style="padding-bottom: 90px; background: #ededed;">
+        </div>
+    <div class="m-input-area" style="justify-content: space-between; gap: 10px;">
+        <button onclick="mExportSelectedMsgs()" class="flex-1 bg-[#07c160] text-white py-2.5 rounded text-sm font-medium">导出已选</button>
+        <button onclick="mDeleteSelectedMsgs()" class="flex-1 bg-red-500 text-white py-2.5 rounded text-sm font-medium">彻底删除已选</button>
+    </div>
+</div>
+
+
+
+-->
+
+                <div class="mt-4 bg-white border-y border-gray-200">
+                    <div class="m-chat-item justify-between" onclick="mSyncNow()">
+                        <span class="text-[15px] font-medium text-gray-800">🔄 手动提取离线消息</span>
+                        <span class="text-gray-400">›</span>
+                    </div>
+                    <div class="m-chat-item justify-between" onclick="document.getElementById('m-log-box').classList.toggle('hidden')">
+                        <span class="text-[15px] font-medium text-gray-800">📜 展开/收起运行日志</span>
+                        <span class="text-gray-400">›</span>
+                    </div>
+                </div>
+                <div id="m-log-box" class="hidden m-4 p-3 bg-gray-900 text-emerald-400 font-mono text-[10px] rounded border border-gray-800 h-64 overflow-y-auto break-all"></div>
+                <div class="mt-4 bg-white border-y border-gray-200">
+                    <div class="m-chat-item justify-center" onclick="mLogout()">
+                        <span class="text-[15px] font-bold text-red-500">退出登录</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+
+        <div class="m-tabbar" id="m-tabbar">
+            <div class="m-tab active" onclick="mSwitchTab(0)">
+                <span class="m-icon">💬</span><span>聊天</span>
+            </div>
+            <div class="m-tab" onclick="mSwitchTab(1)">
+                <span class="m-icon">👥</span><span>通讯录</span>
+            </div>
+            <div class="m-tab" onclick="mSwitchTab(2)">
+                <span class="m-icon">⚙️</span><span>设置</span>
+            </div>
+        </div>
+
+        <div id="m-chat-window" class="m-chat-window-overlay">
+
+
+<div class="m-chat-header">
+    <div class="m-chat-back" onclick="mCloseChat()" style="padding: 10px; cursor: pointer;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"></polyline></svg>返回
+    </div>
+    
+    <div class="flex-1 text-center font-bold mr-6 truncate" id="m-chat-title" style="font-size: 18px;font-weight: 400;color: #4a5563;">
+        聊天对象
+    </div>
+    
+    <div style="padding: 20px; cursor: pointer;" onclick="mOpenServerQueueMenu()">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="" class="bi bi-three-dots" viewBox="0 0 16 16">
+            <path d="M3 9.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3m5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3m5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3"></path>
+        </svg>
+    </div>
+</div>
+
+
+            <div class="m-msg-area" id="m-chat-history">
+                </div>
+<div class="m-input-area">
+    <input type="file" id="m-file-input" class="hidden" onchange="mHandleFileSelect()">
+    
+
+
+    <textarea id="m-msg-input" class="m-input-box" rows="1" placeholder="发送安全消息..."></textarea>
+
+    <button onclick="mTriggerFileSelect()" class="m-file-btn" type="button" style="
+    margin-bottom: 8px;
+">📎</button>
+
+    <button onclick="mSendMsg()" class="m-send-btn">发送</button>
+</div>
+        </div>
+
+<!-- new -->
+<div id="m-action-sheet" class="hidden fixed inset-0 bg-black/50 z-[999] flex items-end transition-opacity duration-300" onclick="mCloseActionSheet()">
+    <div class="bg-[#f7f7f7] w-full rounded-t-xl overflow-hidden transform translate-y-0 transition-transform duration-300 shadow-xl" onclick="event.stopPropagation()">
+        <div id="m-action-sheet-title" class="text-center py-3.5 text-xs text-gray-500 bg-white border-b border-gray-100 truncate px-4">
+            正在对对话进行管理
+        </div>
+        
+        <button onclick="mActionExport()" class="w-full py-4 text-center text-[16px] text-[#1a1a1a] bg-white active:bg-gray-100 border-b border-gray-100 transition-colors">
+            导出当前聊天消息记录
+        </button>
+        <button onclick="mActionDelete()" class="w-full py-4 text-center text-[16px] text-red-500 bg-white active:bg-gray-100 font-medium transition-colors">
+            删除当前消息记录
+        </button>
+        
+        <div class="h-1.5 bg-[#f3f3f3]"></div>
+        <button onclick="mCloseActionSheet()" class="w-full py-4 text-center text-[16px] text-gray-600 bg-white active:bg-gray-100 transition-colors">
+            取消
+        </button>
+    </div>
+</div>
+
+
+<div id="m-msg-manager-page" class="m-chat-window-overlay" style="z-index: 150;">
+   
+  <div class="m-chat-header">
+        <div class="m-chat-back" onclick="mCloseMsgManager()" style="padding: 15px;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"></polyline></svg>返回
+        </div>
+        <div class="flex-1 text-center font-bold mr-6" style="    font-weight: 400;">消息管理 (移动端)</div>
+
+        <div style="padding: 20px; cursor: pointer;" onclick="mOpenServerQueueMenu()">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="" class="bi bi-three-dots" viewBox="0 0 16 16">
+            <path d="M3 9.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3m5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3m5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3"></path>
+        </svg>
+    </div>
+
+    </div>
+   
+
+
+
+    <div class="m-msg-area" id="m-msg-manager-list" style="padding-bottom: 90px; background: #ededed;">
+        </div>
+    <div class="m-input-area" style="justify-content: space-between; gap: 10px;">
+        <button onclick="mExportSelectedMsgs()" class="flex-1 bg-[#07c160] text-white py-2.5 rounded text-sm font-medium">导出已选</button>
+        <button onclick="mDeleteSelectedMsgs()" class="flex-1 bg-red-500 text-white py-2.5 rounded text-sm font-medium">彻底删除已选</button>
+    </div>
+</div>
+
+
+<div id="m-server-queue-sheet" class="hidden fixed inset-0 bg-black/50 z-[999] flex items-end transition-opacity duration-300" onclick="mCloseServerQueueMenu()">
+    <div class="bg-[#f7f7f7] w-full rounded-t-xl overflow-hidden transform translate-y-0 transition-transform duration-300 shadow-xl" onclick="event.stopPropagation()">
+        <div class="text-center py-3.5 text-xs text-gray-500 bg-white border-b border-gray-100 truncate px-4">
+            高能管控指令
+        </div>
+        
+        <button onclick="mClearServerQueue()" class="w-full py-4 text-center text-[16px] text-red-500 bg-white active:bg-gray-100 font-medium border-b border-gray-100 transition-colors">
+            清除服务端我的全部待接收消息
+        </button>
+        
+        <div class="h-1.5 bg-[#f3f3f3]"></div>
+        <button onclick="mCloseServerQueueMenu()" class="w-full py-4 text-center text-[16px] text-[#1a1a1a] bg-white active:bg-gray-100 transition-colors">
+            取消
+        </button>
+    </div>
+</div>
+
+
+
+
+
+    </div>
+
+    <script src="./ximi.js"></script>
+    <script src="./web.js"></script>
+</body>
+</html>
