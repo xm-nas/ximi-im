@@ -74,7 +74,7 @@
    将项目所有文件上传至你的 Web 站点根目录（如 wwwroot/im）。
    或是克隆仓库代码
 ```bash
-   git clone [https://github.com/xm-nas/ximi-im.git](https://github.com/xm-nas/ximi-im.git)
+git clone https://github.com/xm-nas/ximi-im.git
 ```
 
 ### 2. 设置目录权限
