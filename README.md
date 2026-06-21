@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  一个基 <b>端到端加密（E2EE）+ 阅后即焚机制</b> 的极简安全聊天系统, 轻量部署·无依赖架构· PHP + SQLite 单文件运行
+  一个基于 <b>端到端加密（E2EE）+ 阅后即焚机制</b> 的极简安全聊天系统, 轻量部署·无依赖架构· PHP + SQLite 单文件运行
 
 <p align="center">
   🌐 <a href="https://app.hhqq.net/">在线演示预览</a> | 📝 <a href="https://www.ximi.me/post-6043.html">官方博客发布页</a>
@@ -67,8 +67,8 @@
 ## 📸 界面预览
 
 | 聊天界面 | 管理后台 |
-|----------|----------|
-| `docs/screenshot1.png` | `docs/screenshot2.png` |
+|----------|----------|----------|
+| `docs/3.png` | `docs/2.png` | `docs/1.png` |
 
 ---
 
