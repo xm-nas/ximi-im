@@ -3,7 +3,7 @@ session_start();
 require_once __DIR__ . '/db.php'; 
 
 // 【安全警告】：我已经将默认的 'admin' 修改，请你务必改成一个更复杂的强密码！
-define('ADMIN_PASSWORD', 'admin'); 
+define('ADMIN_PASSWORD', 'admin888'); 
 
 // 1. 登录逻辑
 if (isset($_POST['action']) && $_POST['action'] === 'login') {
@@ -34,8 +34,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // 单个用户操作 (通过键名识别 ID)
     if (isset($_POST['update_user'])) {
         $id = array_key_first($_POST['update_user']);
-        $pdo->prepare("UPDATE users SET username=?, nickname=?, password_text=? WHERE id=?")
-            ->execute([$_POST['username'][$id], $_POST['nickname'][$id], $_POST['password'][$id], $id]);
+        // 增加对 last_ip 字段的更新支持
+        $pdo->prepare("UPDATE users SET username=?, nickname=?, password_text=?, last_ip=? WHERE id=?")
+            ->execute([$_POST['username'][$id], $_POST['nickname'][$id], $_POST['password'][$id], $_POST['last_ip'][$id], $id]);
     }
     if (isset($_POST['delete_user'])) {
         $id = array_key_first($_POST['delete_user']);
@@ -83,7 +84,17 @@ foreach ($user_data as $u) { $user_map[$u['id']] = $u['nickname'] ?: $u['usernam
                     <button name="batch_delete_users" onclick="return confirm('警告：确定删除选中的用户及其关联消息？')" class="bg-red-600 text-white px-4 py-1 rounded text-sm hover:bg-red-700">删除勾选用户</button>
                 </div>
                 <table class="w-full text-sm text-left border">
-                    <thead class="bg-gray-100 border-b"><tr><th class="p-3"><input type="checkbox" onclick="selectAll(this, 'user_ids[]')"></th><th class="p-3">ID</th><th class="p-3">用户名</th><th class="p-3">昵称</th><th class="p-3">密码</th><th class="p-3">操作</th></tr></thead>
+                    <thead class="bg-gray-100 border-b">
+                        <tr>
+                            <th class="p-3"><input type="checkbox" onclick="selectAll(this, 'user_ids[]')"></th>
+                            <th class="p-3">ID</th>
+                            <th class="p-3">用户名</th>
+                            <th class="p-3">昵称</th>
+                            <th class="p-3">密码</th>
+                            <th class="p-3">最后登录IP</th>
+                            <th class="p-3">操作</th>
+                        </tr>
+                    </thead>
                     <tbody>
                         <?php foreach ($pdo->query("SELECT * FROM users")->fetchAll() as $u): ?>
                         <tr class="border-b hover:bg-gray-50">
@@ -92,6 +103,7 @@ foreach ($user_data as $u) { $user_map[$u['id']] = $u['nickname'] ?: $u['usernam
                             <td class="p-3"><input name="username[<?=$u['id']?>]" value="<?=htmlspecialchars($u['username'], ENT_QUOTES, 'UTF-8')?>" class="border p-1 w-full rounded"></td>
                             <td class="p-3"><input name="nickname[<?=$u['id']?>]" value="<?=htmlspecialchars($u['nickname'], ENT_QUOTES, 'UTF-8')?>" class="border p-1 w-full rounded"></td>
                             <td class="p-3"><input name="password[<?=$u['id']?>]" value="<?=htmlspecialchars($u['password_text'], ENT_QUOTES, 'UTF-8')?>" class="border p-1 w-full rounded"></td>
+                            <td class="p-3"><input name="last_ip[<?=$u['id']?>]" value="<?=htmlspecialchars($u['last_ip'] ?? '', ENT_QUOTES, 'UTF-8')?>" class="border p-1 w-full rounded"></td>
                             <td class="p-3">
                                 <button name="update_user[<?=$u['id']?>]" class="text-blue-600 mr-2">保存</button>
                                 <button name="delete_user[<?=$u['id']?>]" onclick="return confirm('确定删除?')" class="text-red-600">删除</button>
