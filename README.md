@@ -97,7 +97,7 @@ chmod 666 blacklist.json
 - 1.宝塔/1pan等面板直接选择 pdo_sqlite 和 mbstring 安装即可;
 - 2.偷懒可以直接选择WordPress的扩展模版肯定没有问题;
 - 2.老版本可能还需要安装json_encode() 和 json_decode(),PHP 8.0+ 默认内置;
-- 扩展检测代码
+- 扩展检测可运行目录内的check.php,搭建成功后建议删除;
 ```php
 <?php
 // check.php
@@ -131,6 +131,7 @@ foreach ($required as $ext) {
 /ximi-im
 ├── api.php           # 核心业务接口 (鉴权、收发、安全防御)
 ├── admin.php         # 独立的可视化运维后台面板
+├── check.php         # 安装环境检测
 ├── db.php            # SQLite 数据库连接及初始化逻辑
 ├── index.html        # 前台 IM 交互界面
 ├── web.js            # 前端Mobile页面相关加密算法库
