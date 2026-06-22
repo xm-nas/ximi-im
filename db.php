@@ -22,13 +22,15 @@ try {
     // 自动初始化建表
     // 1. 用户表：存储用户名、昵称、登录凭证、以及用于端到端加密的【身份公钥】
     $pdo->exec("CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT UNIQUE NOT NULL,
-        password_text TEXT NOT NULL, -- 遵循本地私有项目简易原则，直接存储明文凭证
-        public_key TEXT,             -- 用户的端到端加密公钥（由前端JS生成并上报）
-        nickname TEXT,               -- 💡【全新升级】用户昵称（用于前端及管理面板友好展示）
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );");
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT NOT NULL UNIQUE,
+        password_text TEXT NOT NULL,
+        public_key TEXT,
+        nickname TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_ip TEXT,
+        stop_user INTEGER DEFAULT 0
+        );");
 
 
 // 2. 离线消息表：存储端到端加密后的密文，服务器无法解密

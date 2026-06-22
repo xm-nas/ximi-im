@@ -1037,7 +1037,7 @@ async function pullMessages(isSilent = false) {
                 log("✅ 成功解密并还原保存文件", fileName);
 
                // await fetch(`api.php?action=delete_files&id=${dirId}`);
-                await fetch(`api.php?action=delete_files&id=${dirId}&message_id=${messageId}`);
+                await fetch(`api.php?action=delete_files&user_id=${loggedInUser.id}&id=${dirId}&message_id=${msgId}`);
                 log("🧹 服务器物理分片已彻底执行无痕焚毁", `目录ID: ${dirId}`);
                 
                 const node = document.getElementById(`file-node-${dirId}`);
