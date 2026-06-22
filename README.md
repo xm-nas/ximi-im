@@ -93,7 +93,28 @@ chmod 666 blacklist.json
    将 admin.php 重命名为不容易被猜到的文件名。
 
    使用 HTTPS 协议访问，以防止中间人劫持前端公私钥交换。
+### 4.扩展要求
+- 1.宝塔/1pan等面板直接选择 pdo_sqlite 和 mbstring 安装即可;
+- 2.偷懒可以直接选择WordPress的扩展模版肯定没有问题;
+- 2.老版本可能还需要安装json_encode() 和 json_decode(),PHP 8.0+ 默认内置;
+- 扩展检测代码
+```php
+<?php
+// check.php
+header('Content-Type: text/plain; charset=utf-8');
 
+$required = ['pdo', 'pdo_sqlite', 'json', 'mbstring'];
+
+echo "--- 环境扩展检测 ---\n";
+foreach ($required as $ext) {
+    if (extension_loaded($ext)) {
+        echo "[√] $ext 扩展已加载\n";
+    } else {
+        echo "[X] $ext 扩展未安装或未启用！\n";
+    }
+}
+?>
+```
 
 ## ⚙️ 后台管理
 
