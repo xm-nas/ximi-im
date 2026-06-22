@@ -37,6 +37,7 @@ function ban_ip($reason) {
     error_log("[SECURITY ALERT] IP: $ip Banned. Reason: $reason");
     echo json_encode(['code' => 403, 'msg' => 'Access Denied: 您的 IP 已被列入黑名单，拒绝服务。']);
     exit;
+;
 }
 
 $current_ip = get_client_ip();
@@ -138,6 +139,17 @@ if ($action === 'register') {
         echo json_encode(['code' => 400, 'msg' => '用户名或密码不能为空']);
         exit;
     }
+
+    // 🔥【核心漏洞修复】：防止存储型 XSS，严禁输入包含 HTML/Script 标签
+    if ($username !== strip_tags($username) || $nickname !== strip_tags($nickname)) {
+        ban_ip("注册请求中包含恶意脚本或HTML标签：Username: $username, Nickname: $nickname");
+        echo json_encode(['code' => 400, 'msg' => '用户名或昵称包含非法字符']);
+        exit;
+    }
+
+    // 实体转义二次加固，确保存入数据库的数据绝对安全
+    $username = htmlspecialchars($username, ENT_QUOTES, 'UTF-8');
+    $nickname = htmlspecialchars($nickname, ENT_QUOTES, 'UTF-8');
 
     try {
         $stmt = $pdo->prepare("INSERT INTO users (username, password_text, public_key, nickname) VALUES (:username, :password, :public_key, :nickname)");
