@@ -86,35 +86,9 @@ chmod 666 blacklist.json
 ```
 ### 3. 确保数据库存放目录可写
 
-   安全配置 (可选但强烈建议)
-
-   修改 admin.php 中的默认管理密码 (define('ADMIN_PASSWORD', 'admin');)。
-
-   将 admin.php 重命名为不容易被猜到的文件名。
-
-   使用 HTTPS 协议访问，以防止中间人劫持前端公私钥交换。
-### 4.扩展要求
-- 1.宝塔/1pan等面板直接选择 pdo_sqlite 和 mbstring 安装即可;
-- 2.偷懒可以直接选择WordPress的扩展模版肯定没有问题;
-- 2.老版本可能还需要安装json_encode() 和 json_decode(),PHP 8.0+ 默认内置;
-- 扩展检测可运行目录内的check.php,搭建成功后建议删除;
-```php
-<?php
-// check.php
-header('Content-Type: text/plain; charset=utf-8');
-
-$required = ['pdo', 'pdo_sqlite', 'json', 'mbstring'];
-
-echo "--- 环境扩展检测 ---\n";
-foreach ($required as $ext) {
-    if (extension_loaded($ext)) {
-        echo "[√] $ext 扩展已加载\n";
-    } else {
-        echo "[X] $ext 扩展未安装或未启用！\n";
-    }
-}
-?>
-```
+ - 前台访问即可自动执行安装向导,数据库路径名称可留空,系统自动生成更安全;
+ - 安装向导会自行检测安装环境是否符合要求,符合要求点一键安装自动完成配置信息;
+ - 首次进入后台会提示设置后台登陆密码,后续使用该密码登陆后台即可;
 
 ## ⚙️ 后台管理
 
@@ -131,7 +105,7 @@ foreach ($required as $ext) {
 /ximi-im
 ├── api.php           # 核心业务接口 (鉴权、收发、安全防御)
 ├── admin.php         # 独立的可视化运维后台面板
-├── check.php         # 安装环境检测
+├── install.php       # 自动安装向导
 ├── db.php            # SQLite 数据库连接及初始化逻辑
 ├── index.html        # 前台 IM 交互界面
 ├── web.js            # 前端Mobile页面相关加密算法库
