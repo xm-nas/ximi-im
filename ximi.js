@@ -1,3 +1,20 @@
+// 在 ximi.js 最顶部添加：
+(async function() {
+    try {
+        // 尝试请求一次 api.php，即使没有任何 action，后端也会在最顶部拦截并检查 setting.php
+        const response = await fetch('api.php');
+        const data = await response.json();
+        
+        // 如果后端返回 503，说明没有配置文件，强制跳转到安装页面
+        if (data.code === 503) {
+            window.location.href = data.redirect;
+        }
+    } catch (e) {
+        // 如果网络请求本身失败，或者已经是安装页，则跳过
+        console.log("系统状态检测未触发或网络异常");
+    }
+})();
+
 let loggedInUser = null;
 let globalUserList = []; 
 let autoPullTimer = null; 
@@ -478,6 +495,13 @@ function activateLoginState() {
     const senderIdentityNode = document.getElementById('senderIdentityNode');
     if (senderIdentityNode) senderIdentityNode.innerText = `ID: ${loggedInUser.id} (${userNick})`;
     
+// 在页面初始化或用户登录后执行一次即可
+// const avatarBox = document.getElementById('avatarBox');
+// if (avatarBox && typeof loggedInUser !== 'undefined') {
+//     avatarBox.title = `ID: ${loggedInUser.id} (${loggedInUser.nickname || '无昵称'})`;
+// }
+
+
     const avatarBox = document.getElementById('avatarBox');
     if (avatarBox) avatarBox.innerText = userNick.substring(0,1).toUpperCase();
     
@@ -717,6 +741,25 @@ async function handleRegister() {
     } catch (err) { log("注册崩溃", err.message); }
 }
 
+// async function handleLogin() {
+//     const username = document.getElementById('username').value;
+//     const password = document.getElementById('password').value;
+//     try {
+//         const res = await fetch(getApiUrl('login'), {
+//             method: 'POST',
+//             headers: { 'Content-Type': 'application/json' },
+//             body: JSON.stringify({ username, password })
+//         });
+//         const data = await res.json();
+//         if (data.code === 200) {
+//             loggedInUser = data.data;
+//             localStorage.setItem('im_panel_user', JSON.stringify(loggedInUser));
+//             activateLoginState();
+//         }
+//         log("登录结果", data);
+//     } catch (err) { log("登录失败", err.message); }
+// }
+
 async function handleLogin() {
     const username = document.getElementById('username').value;
     const password = document.getElementById('password').value;
@@ -727,14 +770,208 @@ async function handleLogin() {
             body: JSON.stringify({ username, password })
         });
         const data = await res.json();
+        
         if (data.code === 200) {
+            // 1. 赋值全局变量
             loggedInUser = data.data;
+            // 2. 保存缓存
             localStorage.setItem('im_panel_user', JSON.stringify(loggedInUser));
+            
+            // 3. 执行原有登录状态激活逻辑
             activateLoginState();
+            
+            // 4. 【新增】安全执行悬浮框初始化
+            initAvatarTooltip();
         }
         log("登录结果", data);
-    } catch (err) { log("登录失败", err.message); }
+    } catch (err) { 
+        log("登录失败", err.message); 
+    }
 }
+
+/**
+ * 页面加载完成或登录成功后调用的 UI 初始化函数
+ */
+// 在 ximi.js 中定义此函数
+// function initAvatarTooltip() {
+//     const avatarBox = document.getElementById('avatarBox');
+    
+//     // 增加调试日志，查看是否找到了元素
+//     if (!avatarBox) {
+//         console.log("调试：未找到 id='avatarBox' 的元素，请检查 HTML 结构");
+//         return;
+//     }
+
+//     if (typeof loggedInUser !== 'undefined' && loggedInUser && loggedInUser.id) {
+//         const nickname = loggedInUser.nickname || '无昵称';
+//         avatarBox.title = `ID: ${loggedInUser.id} (${nickname})`;
+//         console.log("调试：已成功绑定悬浮提示到 avatarBox");
+//     } else {
+//         console.log("调试：loggedInUser 尚未初始化，跳过绑定");
+//     }
+// }
+/**
+ * 升级版：零延迟、秒瞬显的头像悬浮提示
+ */
+/**
+ * 终极、完美的零延迟、秒瞬显头像悬浮提示
+ * 彻底解决两层标签重叠显示的问题
+ */
+
+/**
+ * 修正版：彻底消灭 "null" 顶层标签的零延迟悬浮提示
+ */
+
+//function initAvatarTooltip() {
+//     const avatarBox = document.getElementById('avatarBox');
+//     if (!avatarBox) return;
+
+//     // 1. 初始化时彻底拔掉 title 属性
+//     avatarBox.removeAttribute('title');
+
+//     if (typeof loggedInUser !== 'undefined' && loggedInUser && loggedInUser.id) {
+//         const nickname = loggedInUser.nickname || '无昵称';
+//         const tooltipText = `ID: ${loggedInUser.id} (${nickname})`;
+
+//         // 2. 动态创建或获取自定义提示框
+//         let tooltip = document.getElementById('m-fast-tooltip');
+//         if (!tooltip) {
+//             tooltip = document.createElement('div');
+//             tooltip.id = 'm-fast-tooltip';
+//             tooltip.style.position = 'fixed';
+//             tooltip.style.backgroundColor = '#4b5563'; 
+//             tooltip.style.color = '#ffffff';
+//             tooltip.style.padding = '6px 10px';
+//             tooltip.style.borderRadius = '2px';
+//             tooltip.style.fontSize = '12px';
+//             tooltip.style.boxShadow = '0 10px 15px -3px rgba(0, 0, 0, 0.3)';
+//             tooltip.style.zIndex = '99999';
+//             tooltip.style.display = 'none'; 
+//             tooltip.style.pointerEvents = 'none'; 
+//             tooltip.style.whiteSpace = 'nowrap';
+//             document.body.appendChild(tooltip);
+//         }
+
+//         tooltip.innerText = tooltipText;
+
+//         // 3. 鼠标移入：不仅显示自定义框，而且死死卡住原生 title
+//         avatarBox.addEventListener('mouseenter', () => {
+//             // 🚨 核心修复：直接设为空字符串，或者直接移除。这样浏览器绝对不会弹窗
+//             avatarBox.title = ""; 
+//             avatarBox.removeAttribute('title');
+            
+//             tooltip.style.display = 'block';
+//         });
+
+//         // 4. 鼠标移动
+//         avatarBox.addEventListener('mousemove', (e) => {
+//             tooltip.style.left = (e.clientX + 12) + 'px';
+//             tooltip.style.top = (e.clientY + 12) + 'px';
+//         });
+
+//         // 5. 鼠标移出
+//         avatarBox.addEventListener('mouseleave', () => {
+//             avatarBox.title = "";
+//             tooltip.style.display = 'none';
+//         });
+//     }
+// }
+
+/**
+ * 升级版：多功能零延迟悬浮提示中心
+ * 集成了头像、聊天记录、通讯录、运行日志四个按钮
+ */
+function initAvatarTooltip() {
+    // 1. 确保全局唯一的自定义提示框存在（共享同一个提示框，节省内存）
+    let tooltip = document.getElementById('m-fast-tooltip');
+    if (!tooltip) {
+        tooltip = document.createElement('div');
+        tooltip.id = 'm-fast-tooltip';
+        tooltip.style.position = 'fixed';
+        tooltip.style.backgroundColor = 'rgba(70, 73, 79, 0.9)'; // 深色高档背景
+        tooltip.style.color = '#ffffff';
+        tooltip.style.padding = '6px 10px';
+        tooltip.style.borderRadius = '3px';
+        tooltip.style.fontSize = '12px';
+        tooltip.style.boxShadow = '0 10px 15px -3px rgba(0, 0, 0, 0.3)';
+        tooltip.style.zIndex = '99999';
+        tooltip.style.display = 'none'; 
+        tooltip.style.pointerEvents = 'none'; // 鼠标穿透，防止卡顿
+        tooltip.style.whiteSpace = 'nowrap';
+        document.body.appendChild(tooltip);
+    }
+
+    // 2. 定义所有需要悬浮提示的配置列表（包含动态获取和写死文本）
+    const tooltipConfig = [
+        {
+            id: 'avatarBox',
+            getText: () => {
+                if (typeof loggedInUser !== 'undefined' && loggedInUser && loggedInUser.id) {
+                    // return `ID: ${loggedInUser.id} (${loggedInUser.nickname || '无昵称'})`;
+                       return `${loggedInUser.nickname || '无昵称'} (UID: ${loggedInUser.id})`;
+                }
+                return null; // 未登录时不显示
+            }
+        },
+        { id: 'menuBtnChat', getText: () => '聊天记录' },
+        { id: 'menuBtnContact', getText: () => '通讯录' },
+        { id: 'logToggleBtn', getText: () => '运行日志' }
+    ];
+
+    // 3. 循环遍历配置，为每个存在的元素绑定事件
+    tooltipConfig.forEach(item => {
+        const el = document.getElementById(item.id);
+        if (!el) return; // 防御性编程：如果当前页面找不到该按钮，直接跳过，不报错
+
+        // 彻底拔掉原生 title 属性，防止双层标签重叠
+        el.removeAttribute('title');
+
+        // 鼠标移入：0ms 瞬间触发
+        el.addEventListener('mouseenter', () => {
+            const text = item.getText();
+            if (!text) return; // 如果没有文本内容，不显示提示框
+
+            // 再次拦截，死死卡住可能被动态写回的原生 title
+            el.title = ""; 
+            el.removeAttribute('title'); 
+            
+            tooltip.innerText = text;
+            tooltip.style.display = 'block';
+        });
+
+        // 鼠标移动：提示框紧跟鼠标指针
+        el.addEventListener('mousemove', (e) => {
+            tooltip.style.left = (e.clientX + 12) + 'px';
+            tooltip.style.top = (e.clientY + 12) + 'px';
+        });
+
+        // 鼠标移出：瞬间隐藏
+        el.addEventListener('mouseleave', () => {
+            el.title = "";
+            tooltip.style.display = 'none';
+        });
+    });
+}
+
+
+
+
+
+
+// 确保 DOM 加载完成后尝试绑定
+window.addEventListener('DOMContentLoaded', () => {
+    initAvatarTooltip();
+});
+
+// 在 ximi.js 中使用事件委托，不需要频繁绑定
+document.addEventListener('mouseover', function(e) {
+    // 检查鼠标划过的是不是 avatarBox
+    if (e.target && e.target.id === 'avatarBox') {
+        if (typeof loggedInUser !== 'undefined' && loggedInUser) {
+            e.target.title = `ID: ${loggedInUser.id} (${loggedInUser.nickname || '无昵称'})`;
+        }
+    }
+});
 
 async function sendEncryptedText() {
     const receiver_id = resolveReceiverId(document.getElementById('receiverInput').value);
@@ -1227,6 +1464,13 @@ window.addEventListener('load', async () => {
         if (authSection) authSection.classList.remove('hidden');
         if (mAuthPage) mAuthPage.classList.remove('-translate-y-full');
     }
+
+    const savedUser = localStorage.getItem('im_panel_user');
+    if (savedUser) {
+        loggedInUser = JSON.parse(savedUser);
+        initAvatarTooltip(); // 页面刷新时自动重新绑定悬浮提示
+    }
+
 });
 
 
@@ -1337,6 +1581,7 @@ async function pcClearServerQueue() {
         }
     };
 }
+
 
 
 // 保证点击设置菜单内部时，不会触发 document 的隐藏事件

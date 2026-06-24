@@ -5,8 +5,25 @@ error_reporting(E_ALL);
 header('Content-Type: application/json; charset=utf-8');
 date_default_timezone_set('Asia/Shanghai');
 
+// 【新增】配置文件检测逻辑
+$settingFile = __DIR__ . '/setting.php';
+if (!file_exists($settingFile)) {
+    // 返回一个特定的 JSON 状态码，告知前端系统尚未安装
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode([
+        'code' => 503, 
+        'msg' => '系统未安装', 
+        'redirect' => 'install.php'
+    ]);
+    exit; // 终止后续数据库连接等操作，防止报错
+}
+
+// 如果存在，则继续载入配置
+$config = require $settingFile;
+
+/*
 // 💡 【安全限制】：只允许您信任的域进行跨域访问
-$allowed_origins = ['https://app.hhqq.net', 'http://www.ximi.me']; 
+$allowed_origins = ['https://app.hhqq.net','http://192.168.1.10:555', 'http://www.ximi.me']; 
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
 if (in_array($origin, $allowed_origins)) {
     header("Access-Control-Allow-Origin: $origin");
@@ -17,6 +34,7 @@ if (in_array($origin, $allowed_origins)) {
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') { exit(0); }
 
+*/
 // ========================================================
 // 核心模块 1：全局黑名单拦截 (Req 7)
 // ========================================================
@@ -462,6 +480,119 @@ if (is_dir($targetDir)) {
     $pdo->prepare("DELETE FROM messages WHERE id = ?")->execute([$messageId]);
 }
     echo json_encode(['code' => 200]); exit;
+}
+// ========================================================
+// 安全加固模块：双重加密身份安全验证体系 (RSA + AES)
+// ========================================================
+// ========================================================
+// 安全加固模块：双重加密身份安全验证体系 (RSA + AES) —— 兼容传参自适应版
+// ========================================================
+
+// 1. 预验证接口：生成 128 位随机字符 Token 并进行混合加密
+if ($action === 'pre_verify') {
+    if (session_status() === PHP_SESSION_NONE) { session_start(); }
+    
+    // 【双保险获取 UID】：优先从前端传参或 Session 中获取
+    $userId = intval($_GET['user_id'] ?? $_SESSION['user_id'] ?? 0);
+    
+    if (!$userId) {
+        echo json_encode(['code' => 403, 'msg' => '鉴权失败：未提供有效的操作用户ID']);
+        exit;
+    }
+
+    // 强行将有效的 UID 写入当前 Session，为接下来的敏感操作铺路
+    $_SESSION['user_id'] = $userId;
+
+    // 从 users 表提取当前用户的公钥
+    $stmt = $pdo->prepare("SELECT public_key FROM users WHERE id = ?");
+    $stmt->execute([$userId]);
+    $pubKey = $stmt->fetchColumn();
+
+    if (!$pubKey) {
+        echo json_encode(['code' => 500, 'msg' => '您的账号未配置安全公钥，无法完成身份双重验证']);
+        exit;
+    }
+
+    // 生成安全算法物料
+    $aesKey = bin2hex(random_bytes(8));   // 生成 16 位文本字符作为 AES-128 密钥
+    $token = bin2hex(random_bytes(64));   // 生成 128 位纯随机字符作为 Token
+    $_SESSION['temp_token'] = $token;      // 将原始明文 Token 安全存入服务端 Session 备查
+
+    // 使用用户的 RSA 公钥加密 AES 密钥
+    $encryptedAesKey = '';
+    $rsaSuccess = openssl_public_encrypt($aesKey, $encryptedAesKey, $pubKey, OPENSSL_PKCS1_PADDING);
+    
+    if (!$rsaSuccess) {
+        echo json_encode(['code' => 500, 'msg' => '服务端内部异常：RSA 公钥加密失败']);
+        exit;
+    }
+
+    // 使用 AES-128-ECB 模式加密 Token 字符
+    $encryptedToken = openssl_encrypt($token, "AES-128-ECB", $aesKey, 0);
+
+    echo json_encode([
+        'code' => 200,
+        'aes_key_enc' => base64_encode($encryptedAesKey),
+        'token_enc' => $encryptedToken
+    ]);
+    exit;
+}
+
+// 2. 核心敏感操作执行接口：解密比对成功后，才执行真实的修改或注销
+if ($action === 'update_profile' || $action === 'delete_account') {
+    if (session_status() === PHP_SESSION_NONE) { session_start(); }
+    
+    $input = json_decode(file_get_contents('php://input'), true) ?? [];
+    
+    // 强制阻断比对：检验前端通过私钥层层解密带回来的 Token 凭证
+    if (!isset($input['verify_token']) || !isset($_SESSION['temp_token']) || $input['verify_token'] !== $_SESSION['temp_token']) {
+        echo json_encode(['code' => 403, 'msg' => '核心身份验证失败：令牌无效、篡改或已过期']);
+        exit;
+    }
+    
+    // 熔断机制：验证成功后立即彻底销毁 Session 令牌，防止重放攻击
+    unset($_SESSION['temp_token']);
+    
+    // 获取当前合法的操作人 ID
+    $userId = intval($_SESSION['user_id'] ?? $input['user_id'] ?? 0);
+    if (!$userId) {
+        echo json_encode(['code' => 403, 'msg' => '鉴权失败：无法锁定操作人身份']);
+        exit;
+    }
+    
+    // --- 验证全通过，开始安全执行数据库事务 ---
+    if ($action === 'update_profile') {
+        $nickname = trim($input['nickname'] ?? '');
+        $password = trim($input['password'] ?? '');
+        
+        if (empty($nickname) && empty($password)) {
+            echo json_encode(['code' => 400, 'msg' => '未传入任何实质性修改内容']);
+            exit;
+        }
+        
+        // 业务分支 A：修改昵称
+        if (!empty($nickname)) {
+            $stmt = $pdo->prepare("UPDATE users SET nickname = ? WHERE id = ?");
+            $stmt->execute([$nickname, $userId]);
+        }
+        
+        // 业务分支 B：修改密码 (保持你项目原有的 md5 散列存储规范)
+        if (!empty($password)) {
+            $md5_password = md5($password);
+            $stmt = $pdo->prepare("UPDATE users SET password_text = ? WHERE id = ?");
+            $stmt->execute([$md5_password, $userId]);
+        }
+        
+        echo json_encode(['code' => 200, 'msg' => '账号隐私数据已安全同步更新']);
+    } 
+    elseif ($action === 'delete_account') {
+        // 业务分支 C：注销账号逻辑
+        $stmt = $pdo->prepare("DELETE FROM users WHERE id = ?");
+        $stmt->execute([$userId]);
+        session_destroy(); // 彻底销毁当前登录会话
+        echo json_encode(['code' => 200, 'msg' => '您的账号及全部关联数据已被物理抹除']);
+    }
+    exit;
 }
 
 echo json_encode(['code' => 404, 'msg' => '无对应接口']);

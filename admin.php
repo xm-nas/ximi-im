@@ -1,13 +1,271 @@
 <?php
 session_start();
+
+// ========================================================
+// 1. 读取配置文件与环境准备
+// ========================================================
+if (!file_exists(__DIR__ . '/setting.php')) {
+    header('Location: install.php');
+    exit;
+}
+$config = require __DIR__ . '/setting.php';
+
+$db_dir = __DIR__ . '/' . $config['db_dir'] . '/';
+if (!is_dir($db_dir)) mkdir($db_dir, 0755, true);
+
+$admin_db_file = $db_dir . $config['admin_db_name'];
+
+// ========================================================
+// 2. 连接管理员独立数据库
+// ========================================================
+try {
+    $admin_pdo = new PDO("sqlite:" . $admin_db_file);
+    $admin_pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $admin_pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+
+    // 建表：包含 登录密钥、最近5次IP、账号状态
+    $admin_pdo->exec("CREATE TABLE IF NOT EXISTS admin_user (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        login_key TEXT NOT NULL,
+        last_ips TEXT DEFAULT '[]',
+        account_status INTEGER DEFAULT 1
+    )");
+} catch (PDOException $e) {
+    die("管理员数据库异常: " . $e->getMessage());
+}
+
+$admin_data = $admin_pdo->query("SELECT * FROM admin_user LIMIT 1")->fetch();
+
+// ========================================================
+// 3. 后台首次运行：初始化密码 (Hash安全加密)
+// ========================================================
+if (!$admin_data) {
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['init_admin'])) {
+        $pwd = trim($_POST['admin_password']);
+        if (!empty($pwd)) {
+            $hash = password_hash($pwd, PASSWORD_DEFAULT);
+            $admin_pdo->prepare("INSERT INTO admin_user (login_key, last_ips, account_status) VALUES (?, ?, 1)")->execute([$hash, '[]']);
+            header('Location: admin.php');
+            exit;
+        }
+    }
+echo '<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script src="https://cdn.tailwindcss.com"></script>
+<title>初始化管理密码</title>
+
+<style>
+body{
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+    background:#f5f7fb;
+}
+.card{
+    background:#fff;
+    border:1px solid #e6e8ee;
+    border-radius:14px;
+}
+.soft{
+    box-shadow:0 10px 30px rgba(18,38,63,.05);
+}
+.btn{
+    background:#07c160;
+}
+.btn:hover{
+    background:#06ad56;
+}
+</style>
+
+</head>
+
+<body class="flex items-center justify-center min-h-screen px-4">
+
+<div class="w-full max-w-md">
+
+    <!-- 顶部品牌 -->
+    <div class="text-center mb-6">
+        <div class="text-2xl font-semibold text-gray-900">ximi IM</div>
+        <div class="text-xs text-gray-500 mt-1">初始化安全中心 · 管理员配置</div>
+    </div>
+
+    <!-- 主卡片 -->
+    <div class="card soft p-6">
+
+        <h2 class="text-lg font-semibold text-gray-800 text-center">
+            ⚙️ 初始化超级管理员
+        </h2>
+
+        <p class="text-xs text-gray-500 text-center mt-2 leading-relaxed">
+            系统首次运行检测到未配置管理员账号<br>
+            请设置<strong class="text-gray-700">高强度密码</strong>用于后台登录
+        </p>
+
+        <!-- 安全提示 -->
+        <div class="mt-4 bg-gray-50 border border-gray-100 rounded-lg p-3 text-xs text-gray-500 leading-relaxed">
+            ✔ 密码采用单向 Hash 加密存储<br>
+            ✔ 系统不会保存明文密码<br>
+            ✔ 建议使用 ≥ 8 位包含字母+数字组合
+        </div>
+
+        <form method="POST" class="mt-5 space-y-4">
+
+            <input type="hidden" name="init_admin" value="1">
+
+            <div>
+                <label class="text-xs text-gray-500">管理员密码</label>
+                <input type="password"
+                       name="admin_password"
+                       placeholder="请输入安全密码"
+                       required
+                       class="w-full mt-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-green-500">
+            </div>
+
+            <button class="w-full py-2.5 rounded-lg text-white text-sm font-medium btn transition">
+                保存并完成初始化
+            </button>
+
+        </form>
+
+    </div>
+
+    <!-- 底部说明 -->
+    <div class="text-center text-xs text-gray-400 mt-5">
+        Secure Setup Wizard · ximi IM System
+    </div>
+
+</div>
+
+</body>
+</html>';
+exit;
+}
+
+// ========================================================
+// 4. 后台登录校验与 IP 追踪
+// ========================================================
+if (isset($_GET['logout'])) { session_destroy(); header('Location: admin.php'); exit; }
+
+if (isset($_POST['action']) && $_POST['action'] === 'login') {
+    if ($admin_data['account_status'] != 1) {
+        $error = "该超管账号已被封禁阻断！";
+    } elseif (password_verify($_POST['password'], $admin_data['login_key'])) {
+        $_SESSION['admin_logged_in'] = true;
+        
+        // 追踪并保存最近 5 次的不重复登录 IP
+        $ip = $_SERVER['REMOTE_ADDR'] ?? 'Unknown';
+        $ips = json_decode($admin_data['last_ips'] ?: '[]', true);
+        array_unshift($ips, $ip); // 插入到开头
+        $ips = array_slice(array_unique($ips), 0, 5); // 去重并截取前5个
+        $admin_pdo->prepare("UPDATE admin_user SET last_ips = ? WHERE id = ?")->execute([json_encode($ips), $admin_data['id']]);
+        
+        header('Location: admin.php');
+        exit;
+    } else {
+        $error = "安全校验失败：密码错误";
+    }
+}
+
+if (!isset($_SESSION['admin_logged_in'])) {
+  echo '<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script src="https://cdn.tailwindcss.com"></script>
+<title>管理登录</title>
+
+<style>
+body{
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+    background:#f5f7fb;
+}
+.card{
+    background:#fff;
+    border:1px solid #e6e8ee;
+    border-radius:14px;
+}
+.soft{
+    box-shadow:0 10px 30px rgba(18,38,63,.05);
+}
+.btn{
+    background:#07c160;
+}
+.btn:hover{
+    background:#06ad56;
+}
+</style>
+
+</head>
+
+<body class="flex items-center justify-center min-h-screen px-4">
+
+<div class="w-full max-w-sm">
+
+    <!-- 品牌 -->
+    <div class="text-center mb-6">
+        <div class="text-2xl font-semibold text-gray-900">ximi IM</div>
+        <div class="text-xs text-gray-500 mt-1">System Operation Center</div>
+    </div>
+
+    <!-- 登录卡片 -->
+    <div class="card soft p-6">
+
+        <h2 class="text-lg font-semibold text-center text-gray-800">
+            系统运维中心
+        </h2>
+
+        <p class="text-xs text-gray-500 text-center mt-2">
+            请输入管理员凭证以进入控制台
+        </p>
+
+        ' . (isset($error) ? '
+        <div class="mt-4 bg-red-50 border border-red-200 text-red-600 text-xs p-2 rounded text-center">
+            ' . $error . '
+        </div>' : '') . '
+
+        <form method="POST" class="mt-5 space-y-4">
+
+            <input type="hidden" name="action" value="login">
+
+            <div>
+                <label class="text-xs text-gray-500">管理密码</label>
+                <input type="password"
+                       name="password"
+                       placeholder="请输入安全密码"
+                       class="w-full mt-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-green-500">
+            </div>
+
+            <button class="w-full py-2.5 rounded-lg text-white text-sm font-medium btn transition">
+                安全登录
+            </button>
+
+        </form>
+
+    </div>
+
+    <!-- 底部 -->
+    <div class="text-center text-xs text-gray-400 mt-5">
+        Secure Console Access · ximi IM
+    </div>
+
+</div>
+
+</body>
+</html>';
+exit;
+}
+
+// 重新获取包含最新登录 IP 的管理员数据
+$admin_data = $admin_pdo->query("SELECT * FROM admin_user LIMIT 1")->fetch();
+
+// ========================================================
+// 5. 引入主数据库执行业务运维 (继承原有逻辑)
+// ========================================================
 require_once __DIR__ . '/db.php'; 
 
-// 【安全警告】：请在上线前务必修改此默认密码！
-define('ADMIN_PASSWORD', 'admin'); 
-
-// ========================================================
-// 1. 初始化设置表 (保证上传开关可用)
-// ========================================================
+// 初始化设置表 (保证上传开关可用)
 try {
     $pdo->exec("CREATE TABLE IF NOT EXISTS settings (`key` TEXT PRIMARY KEY, `value` TEXT)");
     $stmt = $pdo->query("SELECT value FROM settings WHERE key='upload_enabled'");
@@ -20,35 +278,14 @@ try {
     die("数据库配置异常: " . $e->getMessage());
 }
 
-// ========================================================
-// 2. 登录与注销逻辑
-// ========================================================
-if (isset($_POST['action']) && $_POST['action'] === 'login') {
-    if ($_POST['password'] === ADMIN_PASSWORD) $_SESSION['admin_logged_in'] = true;
-    else $error = "密码错误";
-}
-if (isset($_GET['logout'])) { session_destroy(); header('Location: admin.php'); exit; }
-
-if (!isset($_SESSION['admin_logged_in'])) {
-    echo '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><script src="https://cdn.tailwindcss.com"></script><title>管理登录</title></head>
-    <body class="bg-gray-100 flex items-center justify-center h-screen"><form method="POST" class="bg-white p-8 rounded shadow-md w-80"><h2 class="text-xl mb-4 font-bold text-center">系统运维中心</h2>
-    '.(isset($error)?'<p class="text-red-500 mb-2 text-sm text-center">'.$error.'</p>':'').'
-    <input type="hidden" name="action" value="login"><input type="password" name="password" placeholder="请输入管理密码" class="w-full border p-2 mb-4 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"><button class="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition">登录后台</button></form></body></html>';
-    exit;
-}
-
-// ========================================================
-// 3. 数据表单提交逻辑处理
-// ========================================================
+// 6. 数据表单提交逻辑处理
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     
-    // [保存] 全局上传开关设置
     if (isset($_POST['save_settings'])) {
         $new_val = $_POST['upload_enabled'] === '1' ? '1' : '0';
         $pdo->prepare("UPDATE settings SET value=? WHERE key='upload_enabled'")->execute([$new_val]);
     }
 
-    // [删除] 批量删除用户及其关联消息
     if (isset($_POST['batch_delete_users'])) {
         $ids = $_POST['user_ids'] ?? [];
         if (!empty($ids)) {
@@ -58,7 +295,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    // [更新] 单个用户所有可编辑字段保存
     if (isset($_POST['update_user'])) {
         $id = array_key_first($_POST['update_user']);
         $username = trim($_POST['username'][$id] ?? '');
@@ -68,7 +304,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $last_ip = trim($_POST['last_ip'][$id] ?? '');
         $stop_user = intval($_POST['stop_user'][$id] ?? 0);
 
-        // 【智能密码处理】：如果管理员输入的密码长度不是32位，说明输入的是明文，系统自动转为MD5存入
         if (strlen($password) !== 32 && !empty($password)) {
             $password = md5($password);
         }
@@ -77,14 +312,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ->execute([$username, $nickname, $password, $created_at, $last_ip, $stop_user, $id]);
     }
 
-    // [删除] 单个用户
     if (isset($_POST['delete_user'])) {
         $id = array_key_first($_POST['delete_user']);
         $pdo->prepare("DELETE FROM messages WHERE sender_id=? OR receiver_id=?")->execute([$id, $id]);
         $pdo->prepare("DELETE FROM users WHERE id=?")->execute([$id]);
     }
 
-    // [删除] 批量删除消息
     if (isset($_POST['batch_delete_msgs'])) {
         $ids = $_POST['msg_ids'] ?? [];
         if (!empty($ids)) {
@@ -93,14 +326,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    // [清空] 清空所有消息列队
     if (isset($_POST['clear_all_msgs'])) { $pdo->exec("DELETE FROM messages"); }
     
-    // 处理完毕刷新页面，防止重复提交
     header('Location: admin.php'); exit;
 }
 
-// 获取用户映射表（用于消息列队中显示名字）
 $user_data = $pdo->query("SELECT id, username, nickname FROM users")->fetchAll(PDO::FETCH_ASSOC);
 $user_map = [];
 foreach ($user_data as $u) { $user_map[$u['id']] = $u['nickname'] ?: $u['username']; }
@@ -116,8 +346,17 @@ foreach ($user_data as $u) { $user_map[$u['id']] = $u['nickname'] ?: $u['usernam
     <div class="max-w-7xl mx-auto bg-white rounded-lg shadow-lg p-6">
         
         <div class="flex justify-between items-center mb-6 border-b pb-4">
-            <h1 class="text-2xl font-bold text-gray-800">安全通讯运维中心</h1>
-            <a href="?logout=1" class="text-red-500 font-bold hover:underline">退出登录</a>
+            <div>
+                <h1 class="text-2xl font-bold text-gray-800">安全通讯运维中心</h1>
+                <div class="text-xs text-gray-500 mt-2 font-mono">
+                    🛡️ 超级管理员状态：正常 | 最近活动 IP: 
+                    <?php 
+                        $ips = json_decode($admin_data['last_ips'], true);
+                        echo empty($ips) ? '暂无记录' : implode(' / ', $ips);
+                    ?>
+                </div>
+            </div>
+            <a href="?logout=1" class="bg-red-50 text-red-600 px-4 py-2 rounded-md font-bold hover:bg-red-500 hover:text-white transition">退出登录</a>
         </div>
 
         <div class="mb-6 p-4 bg-blue-50 border border-blue-100 rounded-lg flex flex-col md:flex-row justify-between items-center gap-4">

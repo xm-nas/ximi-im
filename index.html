@@ -100,10 +100,9 @@
         .m-bubble-wrap.me { flex-direction: row-reverse; }
         .m-bubble { max-width: 70%; padding: 10px 14px; border-radius: 5px; font-size: 15px; word-break: break-all; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
         .m-bubble-wrap.them .m-bubble { background: #fff; color: #000; margin-left: 10px; border-top-left-radius: 5px; }
-        .m-bubble-wrap.me .m-bubble { background: #95ec69; color: #000; margin-right: 10px; border-top-right-radius: 5px; }
+        .m-bubble-wrap.me .m-bubble { background: #95ec69; color: #000; margin-right:20px; border-top-right-radius: 5px; }
 
 .m-bubble-wrap{display:flex;flex-direction:row;margin:10px;max-width:100%}
-.m-bubble-wrap.me{padding-right:10px}
 .m-bubble-wrap.them{align-items:flex-start}
 .m-msg-nickname{font-size:11px;color:#999;margin-bottom:2px}
 .m-bubble{position:relative;padding:8px 12px;border-radius:8px;font-size:15px;line-height:1.4;word-break:break-all}
@@ -113,6 +112,7 @@
 .them .m-bubble{background-color:#fff}
 .them .m-bubble::before{left:-6px;border-width:5px 6px 5px 0;border-color:transparent #fff transparent transparent}
 
+ .m-bubble-wrap.me{padding-right:20px;}
 
 /* 微信 Action Sheet 上滑动画补丁 */
 @keyframes slideUp {
@@ -134,6 +134,23 @@ span.tool-icon:hover {
 }
 label.ll2:hover {
     cursor: pointer;
+}
+
+
+/* 新增容器的基础样式 */
+#m-msg-adminuser-page {
+    position: fixed;
+    inset: 0;
+    background: #ededed;
+    z-index: 150;
+    display: flex;
+    flex-direction: column;
+    transform: translateX(100%); /* 初始隐藏在右侧 */
+    transition: transform 0.25s ease-out;
+}
+/* 显示时的状态 */
+#m-msg-adminuser-page.show {
+    transform: translateX(0);
 }
 
     </style>
@@ -199,7 +216,9 @@ label.ll2:hover {
 
 
                          <div class="menu-row flex items-center justify-start gap-2 leading-none" onclick="pcOpenMsgManager(); closeWechatMenu();"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="folder" aria-hidden="true" class="lucide lucide-folder w-4 h-4 text-gray-500"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg> 消息记录管理</div>
-                        <div class="menu-row flex items-center justify-start gap-2 leading-none" onclick="document.getElementById('apiPopover').classList.toggle('hidden'); closeWechatMenu();"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="globe" aria-hidden="true" class="lucide lucide-globe w-4 h-4 text-gray-500"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path><path d="M2 12h20"></path></svg> 路由设置</div>
+                        <!--
+                         <div class="menu-row flex items-center justify-start gap-2 leading-none" onclick="document.getElementById('apiPopover').classList.toggle('hidden'); closeWechatMenu();"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="globe" aria-hidden="true" class="lucide lucide-globe w-4 h-4 text-gray-500"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path><path d="M2 12h20"></path></svg> 路由设置</div>
+-->
                         <div class="menu-row flex items-center justify-start gap-2 leading-none" onclick="exportIdentityKeys(); closeWechatMenu();"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="download" aria-hidden="true" class="lucide lucide-download w-4 h-4 text-gray-500"><path d="M12 15V3"></path><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="m7 10 5 5 5-5"></path></svg> 导出密钥</div>
                         <div class="menu-row flex items-center justify-start gap-2 leading-none" onclick="triggerKeyImport(); closeWechatMenu();"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="upload" aria-hidden="true" class="lucide lucide-upload w-4 h-4 text-gray-500"><path d="M12 3v12"></path><path d="m17 8-5-5-5 5"></path><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path></svg> 导入密钥</div>
                         <div id="logoutMenuRow" class="menu-row hidden text-orange-400 border-t border-green-500 mt-1  flex items-center justify-start gap-2 leading-none" onclick="handleLogout(); closeWechatMenu();"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="log-out" aria-hidden="true" class="lucide lucide-log-out w-4 h-4 text-red-500"><path d="m16 17 5-5-5-5"></path><path d="M21 12H9"></path><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path></svg> 注销当前身份</div>
@@ -208,7 +227,7 @@ label.ll2:hover {
                     </div>
                     <div id="apiPopover" class="hidden absolute left-[75px] bottom-12 bg-white p-3 rounded-xl shadow-xl border border-gray-200 z-50 w-64">
                         <p class="text-xs font-bold text-gray-500 mb-1">后端 API 路由节点：</p>
-                        <input type="text" id="apiUrl" class="w-full text-xs p-2 bg-gray-50 border rounded-lg font-mono" value="https://app.hhqq.net/api.php">
+                        <input type="text" id="apiUrl" class="w-full text-xs p-2 bg-gray-50 border rounded-lg font-mono" value="./api.php">
                     </div>
                     <input type="file" id="importKeyInput" accept=".json" class="hidden" onchange="handleKeyImport(event)">
                 </div>
@@ -274,33 +293,6 @@ label.ll2:hover {
                 <div class="h-36 border-t border-gray-200 flex flex-col bg-white" id="chatInputArea">
        
 <div class="h-8 px-4 flex items-center gap-4 border-b border-gray-100 bg-gray-50">
-   <!--
-
-<div class="toolbar">
-                    <span class="tool-icon">☺</span>
-                    <span class="tool-icon">📁</span>
-                    <span class="tool-icon">✂</span>
-                    <span class="tool-icon">🎙</span>
-                </div>
-
- -->
-   
-   
-<!-- 
-    <label class="cursor-pointer text-sm flex items-center gap-1 text-gray-500 hover:text-purple-600 transition" title="全量分片加密上传">
-        📁 <span class="text-xs font-medium">加密传输文件</span>
-        <input type="file" id="fileInput" class="hidden" onchange="updateFileIndicator(this)">
-    </label>
-
-    <span id="fileIndicator" class="text-[11px] text-gray-400 max-w-xs truncate"></span>
-    <button id="uploadFileBtn" onclick="sendEncryptedFile()" class="hidden bg-purple-600 text-white text-[10px] px-2 py-0.5 rounded hover:bg-purple-700">确认分片外发</button>
-    
-    <div class="ml-auto">
-        <button onclick="pcClearServerQueue()" class="text-[11px] font-bold text-red-500 border border-red-200 bg-red-50 hover:bg-red-500 hover:text-white px-2 py-1 rounded transition shadow-sm" title="销毁服务器上等待发送给我的残存消息">
-            🧹 清空云端接收队列
-        </button>
-    </div>
--->
 
 <div class="toolbar">
                     
@@ -366,9 +358,6 @@ label.ll2:hover {
         </div>
     </div>
 </div>
-
-
-
 
 
 
@@ -556,6 +545,56 @@ label.ll2:hover {
     </div>
 </div>
 
+<div id="m-msg-adminuser-page" class="m-chat-window-overlay" style="z-index: 150;">
+   
+  <div class="m-chat-header">
+        <div class="m-chat-back" onclick="mCloseAdminPage()" style="padding: 15px;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"></polyline></svg>返回
+        </div>
+        <div class="flex-1 text-center font-bold mr-6" style="    font-weight: 400;">个人信息 (移动端)</div>
+
+       <div style="padding: 20px; cursor: pointer;">
+         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="" class="bi bi-three-dots" viewBox="0 0 16 16">
+            <path d="M3 9.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3m5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3m5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3"></path>
+          </svg>
+       </div>
+
+    </div>
+   
+ <div class="m-msg-adminuser-page-body" style="padding: 20px;">
+    <div class="mb-4">
+        <label class="text-sm text-gray-500">用户 ID</label>
+        <input type="text" id="m-admin-uid" class="w-full p-2 border border-gray-200 rounded mt-1 bg-gray-100 text-gray-500 outline-none cursor-not-allowed" readonly>
+    </div>
+
+    <div class="mb-4">
+        <label class="text-sm text-gray-500">登录账号</label>
+        <input type="text" id="m-admin-username" class="w-full p-2 border border-gray-200 rounded mt-1 bg-gray-100 text-gray-500 outline-none cursor-not-allowed" readonly>
+    </div>
+
+    <div class="mb-4">
+        <label class="text-sm text-gray-500">昵称</label>
+        <input type="text" id="m-admin-nickname" class="w-full p-2 border rounded mt-1 outline-none" placeholder="输入新昵称">
+    </div>
+    
+    <div class="mb-4">
+        <label class="text-sm text-gray-500">新密码</label>
+        <input type="password" id="m-admin-password" class="w-full p-2 border rounded mt-1 outline-none" placeholder="不填则不修改">
+    </div>
+ </div>
+
+
+    <div class="m-input-area" style="justify-content: space-between; gap: 10px;">
+        <button onclick="mSubmitAdminProfile()" class="flex-1 bg-[#07c160] text-white py-2.5 rounded text-sm font-medium">保存信息</button>
+
+       <button onclick="mSubmitDeleteAccount()" class="flex-1 bg-red-500 text-white py-2.5 rounded text-sm font-medium">注销账号</button>
+
+    </div>
+</div>
+
+
+
+
 
 <div id="m-server-queue-sheet" class="hidden fixed inset-0 bg-black/50 z-[999] flex items-end transition-opacity duration-300" onclick="mCloseServerQueueMenu()">
     <div class="bg-[#f7f7f7] w-full rounded-t-xl overflow-hidden transform translate-y-0 transition-transform duration-300 shadow-xl" onclick="event.stopPropagation()">
@@ -573,7 +612,6 @@ label.ll2:hover {
         </button>
     </div>
 </div>
-
 
 
 

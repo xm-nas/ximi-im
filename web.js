@@ -338,28 +338,7 @@ function mCloseChat() {
     mLoopRender();
 }
 
-/*
 
-function mRenderChatHistory() {
-    const container = document.getElementById('m-chat-history');
-    if (!container) {
-        console.error("未找到容器 m-chat-history");
-        return;
-    }
-    
-    // 增加调试点
-    console.log("当前活动UID:", mActiveTargetId);
-    console.log("当前用户聊天历史:", chatHistory[loggedInUser.id]);
-
-    const myHistory = chatHistory[loggedInUser.id] || {};
-    const msgs = myHistory[mActiveTargetId] || [];
-    
-    console.log("该好友消息数:", msgs.length); // 如果这里输出 0，说明数据源确实没存进去
-    
-    // ... 后续代码
-}
-
-*/
 // ==========================================
 // 重新补充：渲染手机端聊天气泡历史的核心函数
 // ==========================================
@@ -515,7 +494,7 @@ function renderSettingsPage() {
 
     // 动态获取当前底层正在使用的路由地址
     const pcApiInput = document.getElementById('apiUrl');
-    const currentApiUrl = pcApiInput ? pcApiInput.value : 'https://app.hhqq.net/api.php';
+    const currentApiUrl = pcApiInput ? pcApiInput.value : './api.php';
 
     // 统一的区块标题样式 (去除了极端的负边距，恢复正常间距)
     const sectionTitleStyle = "background: #ededed; padding: 12px 15px 4px 15px; color: #999f9e; font-size: 14px;";
@@ -528,11 +507,13 @@ function renderSettingsPage() {
             </div>
 
             <div class="mt-0 bg-white border-b border-gray-200">
-                <div class="m-chat-item justify-between" onclick="document.getElementById('m-api-box').classList.toggle('hidden')">
-                   <span class="flex items-center gap-2 leading-none"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="globe" aria-hidden="true" class="lucide lucide-globe w-4 h-4 text-gray-500"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path><path d="M2 12h20"></path></svg> 路由设置</span>
+               <!--
+               <div class="m-chat-item justify-between" onclick="document.getElementById('m-api-box').classList.toggle('hidden')">
+                   <span class="flex items-center gap-2 leading-none"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="globe" aria-hidden="true" class="lucide lucide-globe w-4 h-4 text-gray-500"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path><path d="M2 12h20"></path></svg>
+                    路由设置</span>
                     <span class="text-gray-400">›</span>
                 </div>
-                
+                -->
                 <div id="m-api-box" class="hidden px-4 py-3 bg-gray-50 border-b border-gray-100">
                     <p class="text-[12px] font-bold text-gray-500 mb-1.5">后端 API 路由节点：</p>
                     <input type="text" id="m-apiUrl" 
@@ -559,7 +540,8 @@ function renderSettingsPage() {
                 </div>
          
                 <div class="m-chat-item justify-between" onclick="mOpenMsgManager()">
-                    <span class="flex items-center gap-2 leading-none"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="folder" aria-hidden="true" class="lucide lucide-folder w-4 h-4 text-gray-500"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg> 离线消息记录管理</span>
+                    <span class="flex items-center gap-2 leading-none"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="folder" aria-hidden="true" class="lucide lucide-folder w-4 h-4 text-gray-500"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg>
+                     离线消息记录管理</span>
                     <span class="text-gray-400">›</span>
                 </div>
             </div>
@@ -582,12 +564,25 @@ function renderSettingsPage() {
             </div>
             
             <div class="mt-0 bg-white border-b border-gray-200">
+
+                <div class="m-chat-item justify-between" onclick="mOpenAdminPage()">
+                    <span class="flex items-center gap-2 leading-none">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="user" aria-hidden="true" class="lucide lucide-user w-4 h-4 text-gray-600"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg> 
+                    个人信息
+                     </span>
+                    <span class="text-gray-400">›</span>
+                </div>
+
                 <div class="m-chat-item text-red-500" onclick="handleLogout()">
-                   <span class="flex items-center gap-2 leading-none"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="log-out" aria-hidden="true" class="lucide lucide-log-out w-4 h-4 text-red-500"><path d="m16 17 5-5-5-5"></path><path d="M21 12H9"></path><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path></svg> 注销当前身份</span>
+                   <span class="flex items-center gap-2 leading-none">
+                   <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="log-out" aria-hidden="true" class="lucide lucide-log-out w-4 h-4 text-red-500"><path d="m16 17 5-5-5-5"></path><path d="M21 12H9"></path><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path></svg>
+                    注销登陆
+                    </span>
                 </div>
                 <div class="m-chat-item text-red-600 font-bold" onclick="resetSystem()">
                    <span class="flex items-center gap-2 leading-none"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="alert-triangle" aria-hidden="true" class="lucide lucide-alert-triangle w-4 h-4 text-red-600"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg> 系统重置</span>
                 </div>
+
             </div>
 
             <div style="${sectionTitleStyle}">
@@ -601,7 +596,7 @@ function renderSettingsPage() {
                  </div>
                  
                  <div class="m-chat-item text-gray-700">
-                   <span class="flex items-center gap-2 leading-none"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="tag" aria-hidden="true" class="lucide lucide-tag w-4 h-4 text-gray-500"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"></path><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"></circle></svg> 版本: V1.10</span>
+                   <span class="flex items-center gap-2 leading-none"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="tag" aria-hidden="true" class="lucide lucide-tag w-4 h-4 text-gray-500"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"></path><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"></circle></svg> 版本: V1.11</span>
                  </div>
 
                  <div class="m-chat-item text-blue-500" style="cursor:pointer; text-overflow: ellipsis;" onclick="window.open('https://github.com/xm-nas/ximi-im','_blank')">
@@ -646,7 +641,7 @@ function renderSettingsPage() {
 
 function checkLatency() {
     const start = Date.now();
-    fetch(getApiUrl('ping') || 'https://app.hhqq.net/api.php').then(() => {
+    fetch(getApiUrl('ping') || './api.php').then(() => {
         const latency = Date.now() - start;
         const el = document.getElementById('m-latency-val');
         if (el) el.innerText = latency + 'ms';
@@ -936,6 +931,19 @@ function mOpenMsgManager() {
     mRenderMsgManagerList();
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
 function mCloseMsgManager() {
     document.getElementById('m-msg-manager-page').classList.remove('show');
 }
@@ -1020,7 +1028,7 @@ async function mClearServerQueue() {
     }
     
     try {
-        const baseApi = document.getElementById('apiUrl') ? document.getElementById('apiUrl').value : 'https://app.hhqq.net/api.php';
+        const baseApi = document.getElementById('apiUrl') ? document.getElementById('apiUrl').value : './api.php';
         const targetUrl = `${baseApi}?action=clear_server_queue`;
         
         const res = await fetch(targetUrl, {
@@ -1041,7 +1049,166 @@ async function mClearServerQueue() {
     }
 }
 
+// ======================== 账号管理 ===============================
 
+// 1. 页面 UI 控制逻辑
+/* function mOpenAdminPage() {
+    const page = document.getElementById('m-msg-adminuser-page');
+    if (page) page.classList.add('show');
+} */
+
+function mCloseAdminPage() {
+    const page = document.getElementById('m-msg-adminuser-page');
+    if (page) page.classList.remove('show');
+}
+
+// 2. 界面“保存信息”按钮触发代理
+function mSubmitAdminProfile() {
+    const nicknameEl = document.getElementById('m-admin-nickname');
+    const passwordEl = document.getElementById('m-admin-password');
+    const nickname = nicknameEl ? nicknameEl.value.trim() : '';
+    const password = passwordEl ? passwordEl.value.trim() : '';
+    
+    if (!nickname && !password) {
+        alert("请输入您想要修改的新昵称或新密码");
+        return;
+    }
+    if (!confirm("确定要提交修改个人隐私信息吗？这将需要调用您的安全私钥进行底层签名确认。")) return;
+    
+    // 提交到安全网关
+    mSecureAction('update_profile', { nickname: nickname, password: password });
+}
+
+// 3. 界面“注销账号”按钮触发代理
+function mSubmitDeleteAccount() {
+    if (!confirm("⚠️⚠️ 绝密警告：注销账号将永久擦除您的所有数据流、云端记录且无法找回！\n\n确定执行此高危操作吗？")) return;
+    
+    // 提交到安全网关
+    mSecureAction('delete_account', {});
+}
+
+// 4. 底层双重高阶加固敏感安全操作网关 (唯一核心)
+// 底层双重高阶加固敏感安全操作网关 (自适应带凭证版)
+// 底层双重高阶加固敏感安全操作网关 (自适应带凭证版 - 修复键名)
+async function mSecureAction(actionType, postData) {
+    console.log(`%c[安全网关] >>> 初始化安全操作鉴权链, 目标指令: [${actionType}]`, "color: #07c160; font-weight: bold;");
+    
+    // 安全兜底：确保全局登录变量存在
+    if (typeof loggedInUser === 'undefined' || !loggedInUser || !loggedInUser.id) {
+        alert("❌ 客户端鉴权失败：未检测到您的有效登录变量，请刷新页面重新登录！");
+        return;
+    }
+
+    try {
+        // Step 1: 请求预验证密文包
+        console.log("[调试] Step 1: 正在向服务器申领混合加密安全凭证 (pre_verify)...");
+        const preRes = await fetch(`./api.php?action=pre_verify&user_id=${loggedInUser.id}`, {
+            credentials: 'include'
+        }).then(r => r.json());
+        
+        console.log("[调试] 服务端响应的原始密文包结构:", preRes);
+
+        if (preRes.code !== 200) {
+            throw new Error(preRes.msg || "无法从服务端构建预验证凭证");
+        }
+
+        // Step 2: 提取本地 RSA 私钥并解密出临时 AES Key
+        console.log("[调试] Step 2: 正在检索本地沙箱存储的用户安全私钥...");
+        // 🚨 核心修复：这里的键名已强制对齐你的核心注册引擎
+        const privateKey = localStorage.getItem('my_priv_key'); 
+        
+        if (!privateKey) {
+            throw new Error("本地沙箱内未检测到您的身份专属私钥！无法签署授权指令。");
+        }
+        
+        const encrypt = new JSEncrypt();
+        encrypt.setPrivateKey(privateKey);
+        
+        // 核心解密：直接传入 Base64 格式的 AES Key
+        const aesKey = encrypt.decrypt(preRes.aes_key_enc);
+        if (!aesKey) {
+            throw new Error("RSA 解密失败！可能您的私钥与当前登录账号注册时上传的公钥不匹配！");
+        }
+        console.log("%c[调试] 🔐 RSA 解密成功！提取出本次通信的动态 AES 密钥: " + aesKey, "color: green;");
+
+        // Step 3: 使用提取出的 AES Key 对密文 Token 进行对称解密
+        console.log("[调试] Step 3: 正在通过解密出的 AES 密钥对称解码核心 Token 字符串...");
+        const decryptedBytes = CryptoJS.AES.decrypt(
+            preRes.token_enc, 
+            CryptoJS.enc.Utf8.parse(aesKey), 
+            { mode: CryptoJS.mode.ECB, padding: CryptoJS.pad.Pkcs7 }
+        );
+        const token = decryptedBytes.toString(CryptoJS.enc.Utf8);
+        
+        if (!token) {
+            throw new Error("AES 密文矩阵破译失败，Token 损坏或填充模式不匹配。");
+        }
+        console.log(`%c[调试] 🔑 AES 解密成功！还原得到 128 位核心令牌: ${token}`, "color: green;");
+
+        // Step 4: 将解密出来的明文 Token 塞入表单，回传给服务器
+        console.log(`[调试] Step 4: 将解密指令附带在表单中，正向服务器提交最终业务请求...`);
+        const finalRes = await fetch(`./api.php?action=${actionType}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include', 
+            body: JSON.stringify({ ...postData, user_id: loggedInUser.id, verify_token: token })
+        }).then(r => r.json());
+        
+        console.log("[调试] 服务端核心业务执行器返回的最终结果:", finalRes);
+
+        if (finalRes.code === 200) {
+            console.log("%c[安全网关] 🎉 恭喜，所有加密环路闭合，身份鉴权完美通过，业务执行成功！", "color: blue; font-weight: bold;");
+            alert("✅ 操作成功: " + finalRes.msg);
+            
+            // 成功后的页面回调
+            if (actionType === 'delete_account') {
+                window.location.reload(); 
+            } else if (actionType === 'update_profile') {
+                // 同步更新本地登录态的内存变量
+                if (postData.nickname) {
+                    loggedInUser.nickname = postData.nickname;
+                }
+                mCloseAdminPage(); 
+            }
+        } else {
+            console.error("[调试] 业务请求被后端拒绝:", finalRes);
+            alert("❌ 授权失败，操作被拒绝: " + finalRes.msg);
+        }
+    } catch (err) {
+        console.error("%c[调试] 🚨 安全通道链路中发生严重错误拦截:", "color: red; font-weight: bold;", err);
+        alert("❌ 安全验证异常，操作已拦截保护：\n" + err.message);
+    }
+}
+/**
+ * 启动个人信息设置面板
+ * 负责在面板显示前，自动填充用户的 UID、用户名及当前昵称
+ */
+function mOpenAdminPage() {
+    // 1. 呼出面板 (假设你的面板 ID 是 m-msg-adminuser-page)
+    const page = document.getElementById('m-msg-adminuser-page');
+    if (page) page.classList.add('show');
+    
+    // 2. 自动填充数据
+    if (typeof loggedInUser !== 'undefined' && loggedInUser) {
+        const uidEl = document.getElementById('m-admin-uid');
+        const usernameEl = document.getElementById('m-admin-username');
+        const nicknameEl = document.getElementById('m-admin-nickname');
+        const passwordEl = document.getElementById('m-admin-password');
+
+        // 填充只读信息
+        if (uidEl) uidEl.value = loggedInUser.id || 'N/A';
+        if (usernameEl) usernameEl.value = loggedInUser.username || 'N/A';
+        
+        // 填充可修改信息
+        if (nicknameEl) nicknameEl.value = loggedInUser.nickname || '';
+        
+        // 清空旧密码框，避免误操作
+        if (passwordEl) passwordEl.value = '';
+    } else {
+        console.warn("未检测到用户信息，无法填充面板数据");
+    }
+}
+//===========================================
 
 // 每 3 秒检测一次
 setInterval(checkLatency, 3000);
