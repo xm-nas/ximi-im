@@ -84,7 +84,7 @@ git clone https://github.com/xm-nas/ximi-im.git
 chmod -R 755 uploads/
 chmod 666 blacklist.json
 ```
-### 3. 确保数据库存放目录可写
+### 3. 一键部署
 
  - 前台访问即可自动执行安装向导,数据库路径名称可留空,系统自动生成更安全;
  - 安装向导会自行检测安装环境是否符合要求,符合要求点一键安装自动完成配置信息;
