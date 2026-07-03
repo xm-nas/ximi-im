@@ -1,7 +1,7 @@
 # 💬 ximi IM(希米密聊)
 
 <p align="center">
-   <img src="https://img.shields.io/badge/Version-v1.10-blue.svg?style=flat-square" alt="Version">
+   <img src="https://img.shields.io/badge/Version-v1.20-blue.svg?style=flat-square" alt="Version">
   <img src="https://img.shields.io/badge/Environment-PHP%207.0%20--%208.5-orange.svg?style=flat-square" alt="PHP">
   <img src="https://img.shields.io/badge/Database-SQLite3-003B57.svg?style=flat-square" alt="Database">
     <img src="https://img.shields.io/badge/Security-E2EE-success.svg?style=flat-square" alt="Security">
@@ -118,9 +118,9 @@ chmod -R 755 uploads/
 ```
 ## 📅 版本与关于
 
-* 当前版本：V1.11 (Stable)
+* 当前版本：V1.20 (Stable)
 
-* 更新日期：2026.06.25
+* 更新日期：2026.07.03
 
 * 作者：ximi
 
