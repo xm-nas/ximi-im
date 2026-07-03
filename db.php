@@ -11,25 +11,24 @@ $config = require __DIR__ . '/setting.php';
 $db_dir = __DIR__ . '/' . $config['db_dir'] . '/';
 $db_file = $db_dir . $config['db_name'];
 
-// 如果指定的数据存放目录不存在，则自动创建
 if (!is_dir($db_dir)) {
     mkdir($db_dir, 0755, true);
 }
 
 try {
-    // 初始化 PDO SQLite 连接
+    // =========================
+    // SQLite 初始化
+    // =========================
     $pdo = new PDO("sqlite:" . $db_file);
-    
-    // 开启异常错误模式
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
-    
-    // 【避坑配置】设置繁忙等待超时为 5 秒，防止并发时 SQLite 文件锁死报错
     $pdo->exec("PRAGMA busy_timeout = 5000;");
-    
-    // 自动初始化建表
+
+    // =========================
+    // 1. 用户表
+    // =========================
     $pdo->exec("CREATE TABLE IF NOT EXISTS users (
-         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT NOT NULL UNIQUE,
         password_text TEXT NOT NULL,
         public_key TEXT,
@@ -37,22 +36,97 @@ try {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         last_ip TEXT,
         stop_user INTEGER DEFAULT 0
-    );");
+    )");
 
+    // =========================
+    // 2. 消息表（群聊+单聊统一）
+    // =========================
     $pdo->exec("CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+        uuid TEXT UNIQUE,  -- 防重复消息（强烈建议使用）
+
         sender_id INTEGER NOT NULL,
-        receiver_id INTEGER NOT NULL,
-        msg_type TEXT NOT NULL,       
-        encrypt_iv TEXT NOT NULL,     
-        encrypted_aes_key TEXT NOT NULL, 
-        encrypted_content TEXT NOT NULL, 
-        is_downloaded INTEGER DEFAULT 0,
+
+        receiver_id INTEGER DEFAULT 0,  -- 私聊
+        group_id INTEGER DEFAULT 0,     -- 群聊
+
+        msg_type TEXT NOT NULL,
+
+        encrypt_iv TEXT NOT NULL,
+        encrypted_aes_key TEXT NOT NULL,
+        encrypted_content TEXT NOT NULL,
+
+        is_read INTEGER DEFAULT 0,
+        is_deleted INTEGER DEFAULT 0,
+
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );");
+    )");
+
+    // =========================
+    // 3. 群聊表
+    // =========================
+    $pdo->exec("CREATE TABLE IF NOT EXISTS chat_groups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name VARCHAR(50) NOT NULL,
+        creator_id INTEGER NOT NULL,
+        room_password TEXT DEFAULT '',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )");
+
+    // =========================
+    // 4. 群成员表（支持角色/权限）
+    // =========================
+    $pdo->exec("CREATE TABLE IF NOT EXISTS group_members (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+        group_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+
+        role TEXT DEFAULT 'member',   -- owner / admin / member
+        mute INTEGER DEFAULT 0,       -- 是否禁言
+
+        joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+        UNIQUE(group_id, user_id)
+    )");
+
+    // =========================
+    // 5. 消息已读表（群聊/私聊扩展）
+    // =========================
+    $pdo->exec("CREATE TABLE IF NOT EXISTS message_reads (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        message_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        read_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(message_id, user_id)
+    )");
+
+    // =========================
+    // 6. 群操作日志（审计用）
+    // =========================
+    $pdo->exec("CREATE TABLE IF NOT EXISTS group_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        action TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )");
+
+    // =========================
+    // 7. 安全升级：自动补字段（兼容旧版本）
+    // =========================
+    $columns = $pdo->query("PRAGMA table_info(messages)")->fetchAll(PDO::FETCH_COLUMN, 1);
+
+    if (!in_array('group_id', $columns)) {
+        $pdo->exec("ALTER TABLE messages ADD COLUMN group_id INTEGER DEFAULT 0");
+    }
+
+    if (!in_array('uuid', $columns)) {
+        $pdo->exec("ALTER TABLE messages ADD COLUMN uuid TEXT");
+    }
 
 } catch (PDOException $e) {
-    header('Content-Type: application/json', true, 500);
-    echo json_encode(['error' => '数据库连接或初始化失败: ' . $e->getMessage()]);
-    exit;
+    die("数据库初始化失败: " . $e->getMessage());
 }
+?>

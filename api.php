@@ -21,20 +21,7 @@ if (!file_exists($settingFile)) {
 // 如果存在，则继续载入配置
 $config = require $settingFile;
 
-/*
-// 💡 【安全限制】：只允许您信任的域进行跨域访问
-$allowed_origins = ['https://app.hhqq.net','http://192.168.1.10:555', 'http://www.ximi.me']; 
-$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
-if (in_array($origin, $allowed_origins)) {
-    header("Access-Control-Allow-Origin: $origin");
-    header("Access-Control-Allow-Credentials: true");
-    header("Access-Control-Allow-Methods: POST, GET, OPTIONS");
-    header("Access-Control-Allow-Headers: Content-Type, Authorization");
-}
 
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') { exit(0); }
-
-*/
 // ========================================================
 // 核心模块 1：全局黑名单拦截 (Req 7)
 // ========================================================
@@ -110,10 +97,8 @@ function check_upload_enabled() {
     }
 }
 
-
-
 try {
-    // Req 1 & 9: 自动创建新结构的用户表
+    // 自动创建新结构的用户表
     $pdo->exec("CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT NOT NULL UNIQUE,
@@ -125,7 +110,7 @@ try {
         stop_user INTEGER DEFAULT 0
     )");
     
-    // Req 10: 保持 messages 表不变
+    // 保持 messages 表基础结构并动态扩展群聊字段
     $pdo->exec("CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         sender_id INTEGER NOT NULL,
@@ -137,6 +122,32 @@ try {
         is_downloaded INTEGER DEFAULT 0,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )");
+
+    // 【动态向后兼容】确保 messages 表存在 group_id 属性
+    try {
+        $pdo->exec("ALTER TABLE messages ADD COLUMN group_id INTEGER DEFAULT 0");
+    } catch (Exception $e) {
+        // 已存在则不作处理
+    }
+
+    // 【新增】群组主表
+    $pdo->exec("CREATE TABLE IF NOT EXISTS chat_groups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        password_text TEXT DEFAULT '',
+        creator_id INTEGER NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )");
+
+    // 【新增】群成员关系关联表
+    $pdo->exec("CREATE TABLE IF NOT EXISTS group_members (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(group_id, user_id)
+    )");
+
 } catch (PDOException $e) {
     exit(json_encode(['code' => 500, 'msg' => '初始化数据表失败']));
 }
@@ -216,6 +227,16 @@ $action = $_GET['action'] ?? '';
 // 1. 用户注册 (Req 1, 2, 3)
 // ------------------------------------------
 if ($action === 'register') {
+    // 【新增】：检查全局注册开关
+    try {
+        $stmt = $pdo->query("SELECT value FROM settings WHERE key='register_enabled'");
+        $res = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($res && $res['value'] == '0') {
+            echo json_encode(['code' => 403, 'msg' => '管理员已关闭新用户注册通道']);
+            exit;
+        }
+    } catch (Exception $e) {} // 容错：如果表不存在，默认放行
+
     $username = trim($input['username'] ?? '');
     $password = trim($input['password'] ?? '');
     $publicKey = trim($input['public_key'] ?? ''); 
@@ -300,43 +321,104 @@ if ($action === 'get_public_key') {
 // 4. 发送消息/上传单文件 (Req 4)
 // ------------------------------------------
 if ($action === 'send_message') {
-    $inputData = (strpos($_SERVER['CONTENT_TYPE'] ?? '', 'application/json') !== false) ? $input : $_POST;
-    
+
+    $inputData = (strpos($_SERVER['CONTENT_TYPE'] ?? '', 'application/json') !== false)
+        ? $input
+        : $_POST;
+
     $sender_id = intval($inputData['sender_id'] ?? 0);
     $receiver_id = intval($inputData['receiver_id'] ?? 0);
+    $group_id = intval($inputData['group_id'] ?? 0);
+
     $msg_type = trim($inputData['msg_type'] ?? 'text');
     $encrypted_content = trim($inputData['encrypted_content'] ?? '');
 
     verify_user_auth($pdo, $sender_id);
 
-if ($msg_type === 'file') { check_upload_enabled();   }
-
-    if ($msg_type === 'file' && isset($_FILES['file']) && $_FILES['file']['error'] === UPLOAD_ERR_OK) {
-        $originalName = basename($_FILES['file']['name']);
-        if (!in_array(strtolower(pathinfo($originalName, PATHINFO_EXTENSION)), ['enc', 'json'])) {
-            ban_ip("尝试上传非法格式后缀文件");
-        }
-
-        $safeFileName = time() . '_' . uniqid() . '.enc';
-        $targetPath = UPLOADS_DIR . '/' . $safeFileName;
-
-        if (move_uploaded_file($_FILES['file']['tmp_name'], $targetPath)) {
-            $encrypted_content = base64_encode(urlencode($originalName) . '|uploads/' . $safeFileName); 
-        } else {
-            exit(json_encode(['code' => 500, 'msg' => '文件保存失败']));
-        }
+    // =========================
+    // 🚨 群聊 / 私聊路由修复
+    // =========================
+    if ($group_id > 0) {
+        $receiver_id = 0;
+    } else {
+        $group_id = 0;
     }
 
     try {
-        $stmt = $pdo->prepare("INSERT INTO messages (sender_id, receiver_id, msg_type, encrypt_iv, encrypted_aes_key, encrypted_content) VALUES (?, ?, ?, ?, ?, ?)");
-        $stmt->execute([$sender_id, $receiver_id, $msg_type, $inputData['encrypt_iv'] ?? '', $inputData['encrypted_aes_key'] ?? '', $encrypted_content]);
+        $stmt = $pdo->prepare("
+            INSERT INTO messages (
+                sender_id,
+                receiver_id,
+                group_id,
+                msg_type,
+                encrypt_iv,
+                encrypted_aes_key,
+                encrypted_content
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ");
+
+        $stmt->execute([
+            $sender_id,
+            $receiver_id,
+            $group_id,
+            $msg_type,
+            $inputData['encrypt_iv'] ?? '',
+            $inputData['encrypted_aes_key'] ?? '',
+            $encrypted_content
+        ]);
+
         echo json_encode(['code' => 200, 'msg' => '发送成功']);
     } catch (PDOException $e) {
-        echo json_encode(['code' => 500, 'msg' => '写入失败']);
+        echo json_encode([
+            'code' => 500,
+            'msg' => '写入失败',
+            'error' => $e->getMessage()
+        ]);
     }
+
     exit;
 }
+//----------群消息拉取
+if ($action === 'pull_group_messages') {
 
+    header('Content-Type: application/json; charset=utf-8');
+
+    try {
+
+        $group_id = intval($_GET['group_id'] ?? 0);
+
+        if ($group_id <= 0) {
+            echo json_encode(['code' => 400, 'msg' => 'group_id invalid']);
+            exit;
+        }
+
+        $stmt = $pdo->prepare("
+            SELECT *
+            FROM messages
+            WHERE group_id = ?
+            ORDER BY id ASC
+        ");
+
+        $stmt->execute([$group_id]);
+
+        echo json_encode([
+            'code' => 200,
+            'data' => $stmt->fetchAll(PDO::FETCH_ASSOC)
+        ]);
+
+    } catch (Throwable $e) {
+
+        http_response_code(500);
+
+        echo json_encode([
+            'code' => 500,
+            'msg' => 'pull_group_messages failed',
+            'error' => $e->getMessage()
+        ]);
+    }
+
+    exit;
+}
 // ------------------------------------------
 // 5. 拉取及列表路由
 // ------------------------------------------
@@ -347,20 +429,59 @@ if ($action === 'list_users') {
 }
 
 if ($action === 'pull_messages') {
-    $userId = intval($_GET['user_id'] ?? 0);
-    verify_user_auth($pdo, $userId);
+    header('Content-Type: application/json; charset=utf-8');
 
-    $pdo->prepare("DELETE FROM messages WHERE receiver_id = ? AND is_downloaded = 1")->execute([$userId]);
-    $stmt = $pdo->prepare("SELECT * FROM messages WHERE receiver_id = ? AND is_downloaded = 0");
-    $stmt->execute([$userId]);
-    $messages = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    try {
+        $user_id = intval($_GET['user_id'] ?? 0);
 
-    $textIds = array_column(array_filter($messages, fn($m) => $m['msg_type'] === 'text'), 'id');
-    if ($textIds) $pdo->exec("UPDATE messages SET is_downloaded = 1 WHERE id IN (" . implode(',', $textIds) . ")");
+        if ($user_id <= 0) {
+            echo json_encode(['code' => 400, 'msg' => 'user_id invalid']);
+            exit;
+        }
 
-    echo json_encode(['code' => 200, 'data' => $messages]); exit;
+        $stmt = $pdo->prepare("
+            SELECT *
+            FROM messages
+            WHERE receiver_id = ?
+            AND group_id = 0
+            ORDER BY id ASC
+        ");
+
+        $stmt->execute([$user_id]);
+        $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // ==========================================
+        // 🔥 修复点 1：私聊文本消息“阅后即焚”物理删除
+        // ==========================================
+        $textMsgIds = [];
+        foreach ($data as $msg) {
+            if ($msg['msg_type'] === 'text') {
+                $textMsgIds[] = $msg['id'];
+            }
+        }
+        
+        // 如果提取到了文本消息，立即在数据库中执行不可逆销毁
+        if (!empty($textMsgIds)) {
+            $placeholders = implode(',', array_fill(0, count($textMsgIds), '?'));
+            $delStmt = $pdo->prepare("DELETE FROM messages WHERE id IN ($placeholders)");
+            $delStmt->execute($textMsgIds);
+        }
+
+        echo json_encode([
+            'code' => 200,
+            'data' => $data
+        ]);
+
+    } catch (Throwable $e) {
+        http_response_code(500);
+        echo json_encode([
+            'code' => 500,
+            'msg' => 'pull_messages failed',
+            'error' => $e->getMessage()
+        ]);
+    }
+    exit;
 }
-
 // ------------------------------------------
 // 6. 清除列队及关联文件 (Req 4, 5, 6)
 // ------------------------------------------
@@ -446,7 +567,7 @@ if ($action === 'get_manifest') {
     exit;
 }
 
-// ------------------------------------------check_upload_enabled();
+// ------------------------------------------
 // 8. 物理文件删除 (Req 4, 5, 6)
 // ------------------------------------------
 if ($action === 'delete_files') {
@@ -462,28 +583,25 @@ if ($action === 'delete_files') {
         ban_ip("尝试使用非标准标识符删除文件");
     }
 
-   // $targetDir = UPLOADS_DIR . "/$dirId/";
+    // 【此处为你补上的变量定义】
+    $targetDir = UPLOADS_DIR . '/' . $dirId;
 
-   // 强制执行物理删除
-if (is_dir($targetDir)) {
-    // 执行递归删除文件夹下所有分片
-    $files = array_diff(scandir($targetDir), ['.', '..']);
-    foreach ($files as $file) { @unlink($targetDir . '/' . $file); }
-    @rmdir($targetDir);
-} else if (file_exists($targetDir)) {
-    @unlink($targetDir); // 如果是单个文件则直接删除
-}
+    if (is_dir($targetDir)) {
+        $files = array_diff(scandir($targetDir), ['.', '..']);
+        foreach ($files as $file) { @unlink($targetDir . '/' . $file); }
+        @rmdir($targetDir);
+    } else if (file_exists($targetDir)) {
+        @unlink($targetDir); 
+    }
 
     delete_dir_safe($pdo, $userId, $targetDir);
     
     if ($messageId > 0) {
-    $pdo->prepare("DELETE FROM messages WHERE id = ?")->execute([$messageId]);
-}
+        $pdo->prepare("DELETE FROM messages WHERE id = ?")->execute([$messageId]);
+    }
     echo json_encode(['code' => 200]); exit;
 }
-// ========================================================
-// 安全加固模块：双重加密身份安全验证体系 (RSA + AES)
-// ========================================================
+
 // ========================================================
 // 安全加固模块：双重加密身份安全验证体系 (RSA + AES) —— 兼容传参自适应版
 // ========================================================
@@ -595,4 +713,302 @@ if ($action === 'update_profile' || $action === 'delete_account') {
     exit;
 }
 
+// ==========================================
+    // 群聊相关接口
+    // ==========================================
+
+    // 3. 获取指定群的成员公钥列表 (发送群消息加密时必须用到)
+    if ($action === 'get_group_members') {
+        $groupId = intval($input['group_id'] ?? 0);
+        
+        // 验证当前用户是否在群内 (防越权越权拉取)
+        $checkStmt = $pdo->prepare("SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?");
+        $checkStmt->execute([$groupId, $userId]);
+        if (!$checkStmt->fetch()) {
+            echo json_encode(['code' => 403, 'msg' => '您不是该群成员，无法获取信息']);
+            exit;
+        }
+
+        $stmt = $pdo->prepare("
+            SELECT u.id, u.username, u.nickname, u.public_key 
+            FROM users u
+            JOIN group_members gm ON u.id = gm.user_id
+            WHERE gm.group_id = ?
+        ");
+        $stmt->execute([$groupId]);
+        $members = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        echo json_encode(['code' => 200, 'data' => $members]);
+        exit;
+    }
+// ------------------------------------------
+// 4.1 发送群组消息 (客户端加密分发模式)
+// ------------------------------------------
+if ($action === 'send_group_message') {
+    $inputData = (strpos($_SERVER['CONTENT_TYPE'] ?? '', 'application/json') !== false) ? $input : $_POST;
+    
+    $sender_id = intval($inputData['sender_id'] ?? 0);
+    $group_id = intval($inputData['group_id'] ?? 0);
+    $msg_type = trim($inputData['msg_type'] ?? 'text');
+    $encrypted_content = trim($inputData['encrypted_content'] ?? '');
+    $encrypt_iv = trim($inputData['encrypt_iv'] ?? '');
+    
+    // member_keys 是一个数组，格式: [['user_id' => 1, 'aes_key' => 'xxx'], ['user_id' => 2, 'aes_key' => 'yyy']]
+    $member_keys = $inputData['member_keys'] ?? []; 
+    if (is_string($member_keys)) { $member_keys = json_decode($member_keys, true); }
+
+    verify_user_auth($pdo, $sender_id);
+
+    if ($msg_type === 'file') { check_upload_enabled(); }
+
+    // 处理文件上传逻辑 (与单聊共用同一套物理沙盒防御)
+    if ($msg_type === 'file' && isset($_FILES['file']) && $_FILES['file']['error'] === UPLOAD_ERR_OK) {
+        $originalName = basename($_FILES['file']['name']);
+        if (!in_array(strtolower(pathinfo($originalName, PATHINFO_EXTENSION)), ['enc', 'json'])) {
+            ban_ip("尝试上传非法格式后缀文件");
+        }
+
+        $safeFileName = time() . '_' . uniqid() . '.enc';
+        $targetPath = UPLOADS_DIR . '/' . $safeFileName;
+
+        if (move_uploaded_file($_FILES['file']['tmp_name'], $targetPath)) {
+            $encrypted_content = base64_encode(urlencode($originalName) . '|uploads/' . $safeFileName); 
+        } else {
+            exit(json_encode(['code' => 500, 'msg' => '群文件保存失败']));
+        }
+    }
+
+    // 核心逻辑：开启事务，将 1 条群消息分裂成 N 条独立消息
+    try {
+        $pdo->beginTransaction();
+        // 注意：这里插入了 group_id 标识
+        $stmt = $pdo->prepare("INSERT INTO messages (sender_id, receiver_id, group_id, msg_type, encrypt_iv, encrypted_aes_key, encrypted_content) VALUES (?, ?, ?, ?, ?, ?, ?)");
+        
+        foreach ($member_keys as $mk) {
+            $rec_id = intval($mk['user_id']);
+            $aes_key_enc = trim($mk['aes_key']);
+            
+            // 为了安全，哪怕是群聊，每个成员也只拿到用自己公钥加密的 AES 密钥
+            $stmt->execute([$sender_id, $rec_id, $group_id, $msg_type, $encrypt_iv, $aes_key_enc, $encrypted_content]);
+        }
+        
+        $pdo->commit();
+        echo json_encode(['code' => 200, 'msg' => '群消息已成功加密分发至所有成员']);
+    } catch (PDOException $e) {
+        $pdo->rollBack();
+        echo json_encode(['code' => 500, 'msg' => '群消息列队写入失败']);
+    }
+    exit;
+}
+// ------------------------------------------
+// 4.2 创建群聊房间
+// ------------------------------------------
+if ($action === 'create_group') {
+    $inputData = (strpos($_SERVER['CONTENT_TYPE'] ?? '', 'application/json') !== false) ? $input : $_POST;
+    $name = trim($inputData['name'] ?? '');
+    $room_password = trim($inputData['room_password'] ?? '');
+    $creator_id = intval($inputData['creator_id'] ?? 0);
+
+    if (empty($name) || empty($room_password) || !$creator_id) {
+        echo json_encode(['code' => 400, 'msg' => '房间名称、密码或创建者信息缺失']);
+        exit;
+    }
+
+    try {
+        $pdo->beginTransaction();
+        // 1. 插入房间主表
+        $stmt = $pdo->prepare("INSERT INTO chat_groups (name, creator_id, room_password) VALUES (?, ?, ?)");
+        $stmt->execute([$name, $creator_id, $room_password]);
+        $group_id = $pdo->lastInsertId();
+
+        // 2. 创建者自动作为第一个成员加入关系表
+        $stmt2 = $pdo->prepare("INSERT INTO group_members (group_id, user_id) VALUES (?, ?)");
+        $stmt2->execute([$group_id, $creator_id]);
+
+        $pdo->commit();
+        echo json_encode(['code' => 200, 'msg' => '群组房间创建成功', 'group_id' => $group_id]);
+    } catch (PDOException $e) {
+        $pdo->rollBack();
+        echo json_encode(['code' => 500, 'msg' => '数据库写入失败: ' . $e->getMessage()]);
+    }
+    exit;
+}
+
+// ------------------------------------------
+// 4.3 凭密码（暗号）加入群聊房间
+// ------------------------------------------
+if ($action === 'join_group') {
+    $inputData = (strpos($_SERVER['CONTENT_TYPE'] ?? '', 'application/json') !== false) ? $input : $_POST;
+    $room_password = trim($inputData['room_password'] ?? '');
+    $user_id = intval($inputData['user_id'] ?? 0);
+
+    if (empty($room_password) || !$user_id) {
+        echo json_encode(['code' => 400, 'msg' => '密码或验证身份缺失']);
+        exit;
+    }
+
+    // 凭借唯一的密码暗号直接查找房间
+    $stmt = $pdo->prepare("SELECT * FROM chat_groups WHERE room_password = ? LIMIT 1");
+    $stmt->execute([$room_password]);
+    $group = $stmt->fetch();
+
+    if (!$group) {
+        echo json_encode(['code' => 404, 'msg' => '未找到匹配的房间，请检查密码是否正确']);
+        exit;
+    }
+
+    $group_id = $group['id'];
+
+    try {
+        // 使用 INSERT OR IGNORE 优雅防止因重复加入导致的数据库唯一索引冲突
+        $stmt2 = $pdo->prepare("INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)");
+        $stmt2->execute([$group_id, $user_id]);
+
+        echo json_encode(['code' => 200, 'msg' => '成功进入房间', 'group_id' => $group_id, 'room_name' => $group['name']]);
+    } catch (PDOException $e) {
+        echo json_encode(['code' => 500, 'msg' => '加入房间失败: ' . $e->getMessage()]);
+    }
+    exit;
+}
+
+// ------------------------------------------
+// 4.4 获取当前用户已加入的群聊列表
+// ------------------------------------------
+if ($action === 'get_my_groups') {
+    $user_id = intval($_GET['user_id'] ?? $_POST['user_id'] ?? 0);
+    
+    if (!$user_id) {
+        echo json_encode(['code' => 400, 'msg' => '用户身份未锁定']);
+        exit;
+    }
+
+    // 🛡️【加固1】：核心安全鉴权，防止恶意用户越权拉取其他人的群列表
+    verify_user_auth($pdo, $user_id);
+
+    try {
+        // 🛡️【加固2】：使用 try-catch 包裹数据库查询。即使表结构出错，也不会导致前端崩溃
+        $stmt = $pdo->prepare("
+            SELECT g.id, g.name, g.creator_id 
+            FROM chat_groups g 
+            INNER JOIN group_members m ON g.id = m.group_id 
+            WHERE m.user_id = ?
+            ORDER BY g.created_at DESC
+        ");
+        $stmt->execute([$user_id]);
+        
+        // 强制使用 FETCH_ASSOC 保证数据干净，避免数字索引导致前端解析错乱
+        $groups = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        echo json_encode(['code' => 200, 'data' => $groups]);
+    } catch (Exception $e) {
+        // 🛡️【加固3】：无论后端出什么错，永远返回合法的 JSON 格式。这样前端绝不会卡死！
+        echo json_encode(['code' => 500, 'msg' => '获取群组列表失败，数据库异常: ' . $e->getMessage(), 'data' => []]);
+    }
+    exit;
+}
+// ------------------------------------------
+// 4.5 获取某个群组内的所有成员（供前端客户端加密分发时获取公钥名册）
+// ------------------------------------------
+if ($action === 'get_group_members') {
+    $group_id = intval($_GET['group_id'] ?? $_POST['group_id'] ?? 0);
+    if (!$group_id) {
+        echo json_encode(['code' => 400, 'msg' => '群组ID未指定']);
+        exit;
+    }
+
+    $stmt = $pdo->prepare("
+        SELECT u.id, u.username, u.nickname, u.public_key 
+        FROM users u 
+        INNER JOIN group_members m ON u.id = m.user_id 
+        WHERE m.group_id = ?
+    ");
+    $stmt->execute([$group_id]);
+    $members = $stmt->fetchAll();
+
+    echo json_encode(['code' => 200, 'data' => $members]);
+    exit;
+}
+
+if ($action === 'list_groups') {
+    $user_id = intval($_GET['user_id'] ?? 0);
+
+    if ($user_id <= 0) {
+        echo json_encode(['code' => 400, 'msg' => '缺少用户ID']);
+        exit;
+    }
+
+    // 🔥 核心修改：只查询当前用户关联的群组
+    $stmt = $pdo->prepare("
+        SELECT g.id, g.name, g.creator_id, g.created_at 
+        FROM chat_groups g
+        JOIN group_members gm ON g.id = gm.group_id
+        WHERE gm.user_id = ?
+        ORDER BY g.id DESC
+    ");
+    
+    $stmt->execute([$user_id]);
+    
+    echo json_encode([
+        'code' => 200,
+        'data' => $stmt->fetchAll(PDO::FETCH_ASSOC)
+    ]);
+    exit;
+}
+
+if ($action === 'get_group_keys') {
+    $groupId = intval($_GET['group_id'] ?? 0);
+
+    if (!$groupId) {
+        echo json_encode(['code' => 400, 'msg' => '缺少group_id']);
+        exit;
+    }
+
+    // 查群成员
+    $stmt = $pdo->prepare("
+        SELECT u.id, u.public_key
+        FROM group_members gm
+        JOIN users u ON gm.user_id = u.id
+        WHERE gm.group_id = ?
+    ");
+    $stmt->execute([$groupId]);
+    $list = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // 过滤掉没有公钥的用户
+    $keys = array_values(array_filter($list, function($u) {
+        return !empty($u['public_key']);
+    }));
+
+    echo json_encode([
+        'code' => 200,
+        'data' => $keys
+    ]);
+    exit;
+}
+
+if ($action === 'get_group_messages') {
+
+    $group_id = intval($_GET['group_id'] ?? 0);
+
+    if (!$group_id) {
+        echo json_encode(['code' => 400, 'msg' => '缺少group_id']);
+        exit;
+    }
+
+    $stmt = $pdo->prepare("
+        SELECT *
+        FROM messages
+        WHERE group_id = ?
+        ORDER BY id ASC
+    ");
+
+    $stmt->execute([$group_id]);
+
+    echo json_encode([
+        'code' => 200,
+        'data' => $stmt->fetchAll(PDO::FETCH_ASSOC)
+    ]);
+    exit;
+}
+
+// 【这是最后一行，多余的括号已经被彻底删除了】
 echo json_encode(['code' => 404, 'msg' => '无对应接口']);

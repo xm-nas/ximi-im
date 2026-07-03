@@ -95,24 +95,79 @@
         .m-send-btn { background: #07c160; color: white; border: none; border-radius: 4px; padding: 0 16px; height: 36px; font-size: 14px; font-weight: 500; transition: background 0.1s; }
         .m-send-btn:active { background: #06ad56; }
         
-        /* 移动端气泡 */
-        .m-bubble-wrap { display: flex; margin-bottom: 16px; width: 100%; }
-        .m-bubble-wrap.me { flex-direction: row-reverse; }
-        .m-bubble { max-width: 70%; padding: 10px 14px; border-radius: 5px; font-size: 15px; word-break: break-all; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
-        .m-bubble-wrap.them .m-bubble { background: #fff; color: #000; margin-left: 10px; border-top-left-radius: 5px; }
-        .m-bubble-wrap.me .m-bubble { background: #95ec69; color: #000; margin-right:20px; border-top-right-radius: 5px; }
+   
+/* ================= 统一修复后的气泡与容器样式 ================= */
+.m-bubble-wrap { 
+    display: flex; 
+    flex-direction: row; 
+    margin: 10px; 
+    padding: 0 10px;
+    width: auto; /* 恢复正常宽度流 */
+}
+.m-bubble-wrap.me { 
+    flex-direction: row-reverse; 
+}
 
-.m-bubble-wrap{display:flex;flex-direction:row;margin:10px;max-width:100%}
-.m-bubble-wrap.them{align-items:flex-start}
-.m-msg-nickname{font-size:11px;color:#999;margin-bottom:2px}
-.m-bubble{position:relative;padding:8px 12px;border-radius:8px;font-size:15px;line-height:1.4;word-break:break-all}
-.m-bubble::before{content:"";position:absolute;top:10px;width:0;height:0;border-style:solid}
-.me .m-bubble{background-color:#95ec69}
-.me .m-bubble::before{right:-6px;border-width:5px 0 5px 6px;border-color:transparent transparent transparent #95ec69}
-.them .m-bubble{background-color:#fff}
-.them .m-bubble::before{left:-6px;border-width:5px 6px 5px 0;border-color:transparent #fff transparent transparent}
+/* 消息气泡主干样式 */
+.m-bubble {
+    position: relative;
+    display: inline-block;
+    max-width: 70%;       /* 完美限制最大宽度占 70% */
+    width: max-content;   /* 智能自适应文本内容宽度 */
+    min-width: 30px;      /* 保证短字时的最小美观度 */
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 15px;
+    line-height: 1.4;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    
+    /* 核心防溢出换行逻辑 */
+    word-break: break-word; 
+    overflow-wrap: break-word; 
+    white-space: normal;
+}
 
- .m-bubble-wrap.me{padding-right:20px;}
+/* 接收方气泡颜色与小尖角 */
+.m-bubble-wrap.them .m-bubble { 
+    background: #fff; 
+    color: #000; 
+    margin-left: 10px; 
+    border-top-left-radius: 2px; /* 微信经典微尖角效果 */
+}
+.m-bubble-wrap.them .m-bubble::before {
+    content: "";
+    position: absolute;
+    top: 12px;
+    left: -6px;
+    border-style: solid;
+    border-width: 5px 6px 5px 0;
+    border-color: transparent #fff transparent transparent;
+}
+
+/* 发送方（自己）气泡颜色与小尖角 */
+.m-bubble-wrap.me .m-bubble { 
+    background: #95ec69; 
+    color: #000; 
+    margin-right: 10px; 
+    border-top-right-radius: 2px; 
+}
+.m-bubble-wrap.me .m-bubble::before {
+    content: "";
+    position: absolute;
+    top: 12px;
+    right: -6px;
+    border-style: solid;
+    border-width: 5px 0 5px 6px;
+    border-color: transparent transparent transparent #95ec69;
+}
+
+/* 昵称修正 */
+.m-msg-nickname {
+    font-size: 11px;
+    color: #999;
+    margin-bottom: 2px;
+}
+
 
 /* 微信 Action Sheet 上滑动画补丁 */
 @keyframes slideUp {
@@ -153,9 +208,52 @@ label.ll2:hover {
     transform: translateX(0);
 }
 
+
+#mobile-group-overlay {
+    position: fixed;
+    top: 0; left: 0; width: 100svw; height: 100svh;
+    background: #f7f7f7;
+    z-index: 99999; /* 覆盖所有旧界面 */
+    display: flex; flex-direction: column;
+}
+.mobile-msg-list { flex: 1; overflow-y: auto; padding: 10px; }
+.mobile-header { height: 50px; background: white; border-bottom: 1px solid #eee; display: flex; align-items: center; padding: 0 15px; font-weight: bold; }
+
+
+
     </style>
 </head>
 <body class="bg-gray-100 md:pc-bg">
+<div id="groupModal" class="hidden fixed inset-0 z-[5000] flex items-center justify-center bg-black/50 transition-opacity" onclick="closeGroupModal()">
+    <div class="bg-white w-[320px] rounded-xl shadow-2xl overflow-hidden transform transition-transform" onclick="event.stopPropagation()">
+        <div class="flex border-b border-gray-200 bg-gray-50">
+            <button id="tabCreateGroup" onclick="switchGroupModal('create')" class="flex-1 py-3 text-sm font-bold text-blue-600 border-b-2 border-blue-600 transition">新建房间</button>
+            <button id="tabJoinGroup" onclick="switchGroupModal('join')" class="flex-1 py-3 text-sm font-bold text-gray-500 hover:text-blue-600 transition">加入房间</button>
+        </div>
+
+        <div id="formCreateGroup" class="p-5 space-y-4">
+            <div>
+                <label class="text-xs text-gray-500 mb-1 block">设置房间名称</label>
+                <input type="text" id="createRoomName" placeholder="例如: 极客安全交流群" class="w-full p-2.5 border border-gray-200 rounded-lg text-sm bg-gray-50 outline-none focus:border-blue-500">
+            </div>
+            <div>
+                <label class="text-xs text-gray-500 mb-1 block">设置房间密码</label>
+                <input type="password" id="createRoomPwd" placeholder="设置专属的加群暗号/密码" class="w-full p-2.5 border border-gray-200 rounded-lg text-sm bg-gray-50 outline-none focus:border-blue-500">
+            </div>
+            <button onclick="submitCreateGroup()" class="w-full bg-blue-600 text-white py-2.5 rounded-lg font-medium hover:bg-blue-700 transition shadow-sm mt-2">立即创建</button>
+        </div>
+
+<div id="formJoinGroup" class="p-5 space-y-4 hidden">
+    <div>
+        <label class="text-xs text-gray-500 mb-1 block">房间通行密码</label>
+        <input type="password" id="joinRoomPwd" placeholder="输入该房间的专属通行暗号/密码" class="w-full p-2.5 border border-gray-200 rounded-lg text-sm bg-gray-50 outline-none focus:border-green-500">
+    </div>
+    <button onclick="submitJoinGroup()" class="w-full bg-green-500 text-white py-2.5 rounded-lg font-medium hover:bg-green-600 transition shadow-sm mt-2">验证暗号并加入</button>
+</div>
+    </div>
+</div>
+
+
 
     <div id="pc-wrapper" class="w-full h-full relative block">
         <div class="wechat-window" id="wechatWindow">
@@ -167,8 +265,9 @@ label.ll2:hover {
                     <div class="w-9 h-9 bg-gray-600 text-white flex items-center justify-center font-bold rounded-lg mb-4 text-sm shadow border border-gray-700" id="avatarBox">🔒</div>
                     <div class="menu-items">
                         <div class="menu-icon active" id="menuBtnChat" onclick="showChatList()" title="聊天记录">💬</div>
-                        <div class="menu-icon text-gray-400" id="menuBtnContact" onclick="showContactList()" title="通讯录">👤</div>
-                        <div class="menu-icon text-gray-400" id="logToggleBtn" onclick="toggleLogConsole(event)" title="实时调试日志">📜</div>
+<div class="menu-icon text-gray-400" id="menuBtnContact" onclick="showContactList()" title="通讯录">👤</div>
+<div class="menu-icon text-gray-400" id="menuBtnGroup" onclick="showGroupList()" title="群聊房间">🧑‍🤝‍🧑</div>
+<!-- <div class="menu-icon text-gray-400" id="logToggleBtn" onclick="toggleLogConsole(event)" title="实时调试日志">📜</div> -->
                     </div>
                 </div>
                 <div class="w-full px-2 flex flex-col items-center relative gap-1">
@@ -233,14 +332,25 @@ label.ll2:hover {
                 </div>
             </div>
 
-            <div class="chat-list-panel">
+<div class="chat-list-panel">
                 <div class="search-bar-container drag-handle">
                     <input type="text" id="receiverInput" list="receiverDataList" oninput="handleReceiverInput()" class="w-full h-7 bg-gray-300 border-none rounded-md px-2 text-xs outline-none text-gray-800" placeholder="搜索或指定接收者 ID/昵称">
                     <datalist id="receiverDataList"></datalist>
                 </div>
+                
                 <div class="flex-1 overflow-y-auto p-1 space-y-0.5" id="userListContainer">
                     <div class="text-center text-xs text-gray-400 py-8">等待身份验证加载名册...</div>
                 </div>
+
+<div id="groupListContainer" class="show">
+    
+
+    
+</div>
+
+
+
+
             </div>
 
             <div class="main-chat-panel">
@@ -279,7 +389,7 @@ label.ll2:hover {
 
                     </div>
 
-                    <div class="w-80 flex flex-col bg-gray-900 h-full overflow-hidden transition-all duration-200" id="logConsolePanel">
+                    <div class="w-80 flex flex-col bg-gray-900 h-full overflow-hidden transition-all duration-200 hidden" id="logConsolePanel">
                         <div class="p-2 bg-gray-950 border-b border-gray-800 flex justify-between items-center px-4">
                             <span class="text-gray-500 text-[10px] font-mono tracking-widest">DEBUG METRIC PANEL</span>
                             <button onclick="document.getElementById('logConsole').innerText=''" class="text-gray-500 text-[10px] hover:text-white transition">CLEAR</button>
@@ -324,8 +434,9 @@ label.ll2:hover {
                         <input type="text" id="senderNickname" readonly class="hidden" value="请先登录">
                         <textarea id="msgText" class="flex-1 border-none resize-none outline-none text-xs p-1 text-gray-800 font-sans" placeholder="输入高级流媒体端到端加密报文..."></textarea>
                         <div class="flex items-end gap-2 pb-1 pr-1">
-                            <button onclick="pullMessages()" class="btn-premium-pull text-xs px-3.5 py-2 rounded-md font-medium shadow-sm flex items-center gap-1" title="同步最新流密文"><span>🔄 接收</span></button>
-                            <button onclick="sendEncryptedText()" class="btn-premium-send text-xs px-5 py-2 rounded-md font-bold shadow-sm">发送</button>
+                            <!-- <button onclick="pullMessages()" class="btn-premium-pull text-xs px-3.5 py-2 rounded-md font-medium shadow-sm flex items-center gap-1" title="同步最新流密文"><span>🔄 接收</span></button> -->
+                            <button onclick="sendEncryptedText()" class="m-send-btn">发送</button>
+ <!-- <button onclick="sendEncryptedText()" class="btn-premium-send text-xs px-5 py-2 rounded-md font-bold shadow-sm">发送</button> -->
                         </div>
                     </div>
                 </div>
@@ -387,7 +498,20 @@ label.ll2:hover {
                 </div>
 
             <div class="m-page" id="m-page-contact">
+
                 </div>
+<div class="m-page" id="m-page-group">
+    <div class="m-chat-item justify-center bg-blue-50 border-b border-blue-100 mt-2 mx-2 rounded shadow-sm" onclick="openGroupModal()">
+        <span class="text-[15px] font-bold text-blue-600">+ 新建 / 加入群聊房间</span>
+    </div>
+    <div id="m-group-list" class="mt-2">
+        <div class="text-center text-xs text-gray-400 py-8">暂无加入的群聊</div>
+    </div>
+ <div id="groupListWrapper"></div>
+
+</div>
+
+
 
             <div class="m-page" id="m-page-settings">
 
@@ -447,17 +571,12 @@ label.ll2:hover {
         </div>
 
 
-        <div class="m-tabbar" id="m-tabbar">
-            <div class="m-tab active" onclick="mSwitchTab(0)">
-                <span class="m-icon">💬</span><span>聊天</span>
-            </div>
-            <div class="m-tab" onclick="mSwitchTab(1)">
-                <span class="m-icon">👥</span><span>通讯录</span>
-            </div>
-            <div class="m-tab" onclick="mSwitchTab(2)">
-                <span class="m-icon">⚙️</span><span>设置</span>
-            </div>
-        </div>
+<div class="m-tabbar" id="m-tabbar">
+     <div class="m-tab" onclick="mSwitchTab(1)"><span class="m-icon">👥</span><span>通讯录</span></div>
+    <div class="m-tab active" onclick="mSwitchTab(0)"><span class="m-icon">💬</span><span>聊天</span></div>
+    <div class="m-tab" onclick="mSwitchTab(2)"><span class="m-icon">🧑‍🤝‍🧑</span><span>群聊</span></div>
+    <div class="m-tab" onclick="mSwitchTab(3)"><span class="m-icon">⚙️</span><span>设置</span></div>
+</div>
 
         <div id="m-chat-window" class="m-chat-window-overlay">
 
@@ -472,9 +591,9 @@ label.ll2:hover {
     </div>
     
     <div style="padding: 20px; cursor: pointer;" onclick="mOpenServerQueueMenu()">
-        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="" class="bi bi-three-dots" viewBox="0 0 16 16">
-            <path d="M3 9.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3m5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3m5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3"></path>
-        </svg>
+<svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+  <path d="M8 3a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zm0 5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zm0 5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z"></path>
+</svg>
     </div>
 </div>
 
@@ -492,7 +611,7 @@ label.ll2:hover {
     margin-bottom: 8px;
 ">📎</button>
 
-    <button onclick="mSendMsg()" class="m-send-btn">发送</button>
+   <button onclick="mSendPrivateMsg()" class="m-send-btn">发送</button>
 </div>
         </div>
 

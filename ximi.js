@@ -1,3 +1,15 @@
+// 在 ximi.js 的最开头添加这一行
+console.log("=== 正在运行的 ximi.js 已加载，监测 fetch 请求 ===");
+
+(function() {
+    const originalFetch = window.fetch;
+    window.fetch = function(url, options) {
+        if (url.includes('list_groups')) {
+            console.warn("⚠️ [DEBUG] 正在发出的请求 URL 是:", url);
+        }
+        return originalFetch.apply(this, arguments);
+    };
+})();
 // 在 ximi.js 最顶部添加：
 (async function() {
     try {
@@ -19,13 +31,58 @@ let loggedInUser = null;
 let globalUserList = []; 
 let autoPullTimer = null; 
 let currentSidebarTab = 'chat'; // 用于标记当前所处视图：'chat'(聊天记录列表) 或 'contact'(全部通讯录)
-
+let currentChatType = 'private';       // 新增：区分当前处于 'private' 还是 'group'
+let currentActiveTargetId = null;      // 对应正在聊天的用户 ID 或群组 ID
+let currentActiveTargetName = '';    // 正在聊天的目标显示昵称/房间名
 // 【新增路由持久化状态中心】
 // chatHistory 数据结构形如: { "当前登录账号UID": { "好友UID": [ {sender_id, type, text, name, timestamp}, ... ] } }
+// 路由持久化状态中心
 let chatHistory = {}; 
-let currentActiveTargetId = null; // 标记当前正在专注于哪一个用户的聊天历史容器
+// 👇【新增】群聊专属物理隔离数据池
+let groupChatHistory = {}; 
+
+function saveHistoryToDisk() {
+    localStorage.setItem('im_chat_persisted_history', JSON.stringify(chatHistory));
+}
+// 👇【新增】群聊数据硬盘持久化
+function saveGroupHistoryToDisk() {
+    localStorage.setItem('im_group_persisted_history', JSON.stringify(groupChatHistory));
+}
 
 
+let groupSyncTimer = null;
+
+function startGroupAutoSync() {
+
+    // 先清旧的
+    if (groupSyncTimer) {
+        clearInterval(groupSyncTimer);
+        groupSyncTimer = null;
+    }
+
+    // 必须是群聊才启动
+    if (currentChatType !== 'group') return;
+
+    if (!currentActiveTargetId) return;
+
+    groupSyncTimer = setInterval(() => {
+
+        if (currentChatType === 'group' && currentActiveTargetId) {
+            pullGroupMessages(currentActiveTargetId);
+        }
+
+    }, 3000); // 3秒同步一次
+}
+
+
+
+// 在 ximi.js 中添加这个全局 log 函数
+window.log = function(title, msg) {
+    const timestamp = new Date().toLocaleTimeString();
+    console.log(`[${timestamp}] [${title}] ${msg || ''}`);
+    // 如果你有 UI 上的日志面板（比如 toast），可以在这里添加代码
+    // 比如：showToast(`${title}: ${msg}`);
+};
 
 /**
  * 新增辅助函数：渲染用户信息面板 (点击用户触发)
@@ -53,10 +110,32 @@ function showUserInfoPanel(uid) {
 /**
  * 启动聊天逻辑
  */
+function stopGroupAutoSync() {
+    if (groupSyncTimer) {
+        clearInterval(groupSyncTimer);
+        groupSyncTimer = null;
+    }
+}
+
 function startChatWith(uid) {
+    // 切换到私聊会话
+    const idStr = String(uid).trim();
+    activeSession = { type: 'private', id: idStr };
+    currentChatType = 'private';
     currentActiveTargetId = parseInt(uid);
-    // 这里调用你原本渲染聊天窗口的逻辑，例如：
-    renderActiveContainer(); 
+
+    // 停止群聊轮询
+    stopGroupAutoSync();
+
+    // 确保私聊历史存在并立即拉取最新私聊消息
+    ensurePrivateHistory(idStr);
+    pullMessages(true).then(() => {
+        renderPrivateChat();
+        renderActiveContainer();
+    }).catch(() => {
+        renderPrivateChat();
+        renderActiveContainer();
+    });
 }
 
 
@@ -72,59 +151,165 @@ function log(title, data) {
 
 //================================================
 
-/**
- * 切换到：聊天记录列表视图 (需求1)
- */
+// ==========================================
+// 切换到：聊天记录列表视图 (修复状态死锁)
+// ==========================================
 function showChatList() {
+    // 激活前先执行页面刷新
+    window.location.reload();
+
     currentSidebarTab = 'chat';
     
-    const btnChat = document.getElementById('menuBtnChat');
-    const btnContact = document.getElementById('menuBtnContact');
-    if (btnChat) btnChat.classList.add('active');
-    if (btnContact) btnContact.classList.remove('active');
-    
-    // 渲染列表（此时会自动走上面的“模式一：按聊天记录过滤”）
-    renderUserListDisplay();
-}
-
-function showContactList() {
-    currentSidebarTab = 'contact';
-    
-    const btnChat = document.getElementById('menuBtnChat');
-    const btnContact = document.getElementById('menuBtnContact');
-    if (btnChat) btnChat.classList.remove('active');
-    if (btnContact) btnContact.classList.add('active');
-    
-    // 渲染列表（此时会自动走上面的“模式二：通讯录显示全量”）
-    renderUserListDisplay();
-}
-
-function showContactList() {
-    currentSidebarTab = 'contact';
+    // 【核心修复 1】：把单聊容器放出来，把群聊容器藏起来
+    const userListContainer = document.getElementById('userListContainer');
+    const groupListContainer = document.getElementById('groupListContainer');
+    if (userListContainer) userListContainer.classList.remove('hidden');
+    if (groupListContainer) groupListContainer.classList.add('hidden');
     
     // 切换左侧侧边栏按钮高亮状态
     const btnChat = document.getElementById('menuBtnChat');
     const btnContact = document.getElementById('menuBtnContact');
-    if (btnChat) btnChat.classList.remove('active');
-    if (btnContact) btnContact.classList.add('active');
+    const btnGroup = document.getElementById('menuBtnGroup'); 
     
-    // 重新渲染第二栏列表
+    if (btnChat) { btnChat.classList.add('active', 'text-white'); btnChat.classList.remove('text-gray-400'); }
+    if (btnContact) { btnContact.classList.remove('active', 'text-white'); btnContact.classList.add('text-gray-400'); }
+    if (btnGroup) { btnGroup.classList.remove('active', 'text-white'); btnGroup.classList.add('text-gray-400'); }
+    
+    // 渲染单聊列表
     renderUserListDisplay();
 }
-/**
- * 切换到：全部用户通讯录视图 (需求2)
- */
+
+// ==========================================
+// 切换到：通讯录视图 (修复状态死锁)
+// ==========================================
 function showContactList() {
+    // 激活前先执行页面刷新
+    // window.location.reload();
+
     currentSidebarTab = 'contact';
     
-    // 切换左侧侧边栏按钮高亮状态
+    // 【核心修复 2】：把单聊容器放出来，把群聊容器藏起来
+    const userListContainer = document.getElementById('userListContainer');
+    const groupListContainer = document.getElementById('groupListContainer');
+    if (userListContainer) userListContainer.classList.remove('hidden');
+    if (groupListContainer) groupListContainer.classList.add('hidden');
+    
     const btnChat = document.getElementById('menuBtnChat');
     const btnContact = document.getElementById('menuBtnContact');
-    if (btnChat) btnChat.classList.remove('active');
-    if (btnContact) btnContact.classList.add('active');
+    const btnGroup = document.getElementById('menuBtnGroup');
     
-    // 重新渲染第二栏列表
+    if (btnChat) { btnChat.classList.remove('active', 'text-white'); btnChat.classList.add('text-gray-400'); }
+    if (btnContact) { btnContact.classList.add('active', 'text-white'); btnContact.classList.remove('text-gray-400'); }
+    if (btnGroup) { btnGroup.classList.remove('active', 'text-white'); btnGroup.classList.add('text-gray-400'); }
+    
+    // 渲染通讯录名册
     renderUserListDisplay();
+}
+
+// ==========================================
+// 切换到：群聊房间视图 (修复列表不显示)
+// ==========================================
+// function showGroupList() {
+//     currentSidebarTab = 'group';
+
+//     const userListContainer = document.getElementById('userListContainer');
+//     const groupListContainer = document.getElementById('groupListContainer');
+
+//     // 🛡 防崩溃
+//     if (!userListContainer || !groupListContainer) {
+//         console.error("缺少 userListContainer 或 groupListContainer");
+//         return;
+//     }
+
+//     userListContainer.classList.add('hidden');
+//     groupListContainer.classList.remove('hidden');
+
+//     // 切换按钮状态
+//     const btnChat = document.getElementById('menuBtnChat');
+//     const btnContact = document.getElementById('menuBtnContact');
+//    const btnGroup = document.getElementById('menuBtnGroup');
+
+//     if (btnChat) btnChat.classList.remove('active', 'text-white');
+//     if (btnContact) btnContact.classList.remove('active', 'text-white');
+//    if (btnGroup) btnGroup.classList.add('active', 'text-white');
+
+
+
+//     // 🔥 核心：永远不要阻塞UI
+//     loadMyGroupListSafe();
+// }
+function showGroupList() {
+    currentSidebarTab = 'group';
+
+    const userListContainer = document.getElementById('userListContainer');
+    const groupListContainer = document.getElementById('groupListContainer');
+
+    if (!userListContainer || !groupListContainer) {
+        console.error("缺少 userListContainer 或 groupListContainer");
+        return;
+    }
+
+    userListContainer.classList.add('hidden');
+    groupListContainer.classList.remove('hidden');
+
+    const btnChat = document.getElementById('menuBtnChat');
+    const btnContact = document.getElementById('menuBtnContact');
+    const btnGroup = document.getElementById('menuBtnGroup');
+
+    if (btnChat) btnChat.classList.remove('active', 'text-white');
+    if (btnContact) btnContact.classList.remove('active', 'text-white');
+    if (btnGroup) btnGroup.classList.add('active', 'text-white');
+
+    // 🔥 修改这里：不要调用 loadMyGroupListSafe()，直接调用我们修复过的 loadMyGroups()
+    loadMyGroups(); 
+}
+
+async function loadMyGroupListSafe() {
+    const container = document.getElementById('groupListContainer');
+    if (!container) return;
+
+    try {
+        const res = await fetch(getApiUrl('list_groups'));
+        const json = await res.json();
+
+        if (json.code !== 200) {
+            container.innerHTML = `<div class="text-gray-400 text-xs p-3">暂无群聊</div>`;
+            return;
+        }
+
+        const groups = json.data || [];
+
+        // ✅ 关键：先渲染“新建群按钮”（只出现一次）
+        let html = `
+            <div class="user-item bg-blue-50 border border-blue-100 rounded mb-2 flex justify-center text-blue-600 font-bold shadow-sm"
+                 onclick="openGroupModal()">
+                <span>+ 新建 / 加入群聊房间</span>
+            </div>
+        `;
+
+        // ✅ 群列表
+        if (groups.length === 0) {
+            html += `<div class="text-center text-xs text-gray-400 py-8">暂无加入的群聊</div>`;
+        } else {
+            html += groups.map(g => `
+                <div class="user-item" onclick="joinGroup(${g.id}, '${g.name}')">
+                    <div class="w-8 h-8 bg-green-500 text-white flex items-center justify-center rounded text-xs">
+                        🧑‍🤝‍🧑
+                    </div>
+                    <div class="ml-2">
+                        <div class="text-xs font-bold">${g.name}</div>
+                        <div class="text-[10px] text-gray-400">ID:${g.id}</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        container.innerHTML = html;
+
+    } catch (e) {
+        console.error(e);
+        container.innerHTML = `<div class="text-red-400 text-xs p-3">加载群失败</div>`;
+    }
 }
 
 /**
@@ -496,10 +681,7 @@ function activateLoginState() {
     if (senderIdentityNode) senderIdentityNode.innerText = `ID: ${loggedInUser.id} (${userNick})`;
     
 // 在页面初始化或用户登录后执行一次即可
-// const avatarBox = document.getElementById('avatarBox');
-// if (avatarBox && typeof loggedInUser !== 'undefined') {
-//     avatarBox.title = `ID: ${loggedInUser.id} (${loggedInUser.nickname || '无昵称'})`;
-// }
+
 
 
     const avatarBox = document.getElementById('avatarBox');
@@ -512,16 +694,20 @@ function activateLoginState() {
     const logoutMenuRow2 = document.getElementById('logoutMenuRow2');
     if (logoutMenuRow2) logoutMenuRow2.classList.remove('hidden');
     
-    // 【读取 LocalStorage 沙箱缓存】
+// 【读取 LocalStorage 沙箱缓存】
     const localStore = localStorage.getItem('im_chat_persisted_history');
     if (localStore) {
-        try {
-            chatHistory = JSON.parse(localStore);
-        } catch(e) { chatHistory = {}; }
+        try { chatHistory = JSON.parse(localStore); } catch(e) { chatHistory = {}; }
     }
-    if (!chatHistory[loggedInUser.id]) {
-        chatHistory[loggedInUser.id] = {};
+    if (!chatHistory[loggedInUser.id]) { chatHistory[loggedInUser.id] = {}; }
+
+    // 👇【新增】读取群聊专属隔离缓存，防止刷新丢失
+    const localGroupStore = localStorage.getItem('im_group_persisted_history');
+    if (localGroupStore) {
+        try { groupChatHistory = JSON.parse(localGroupStore); } catch(e) { groupChatHistory = {}; }
     }
+    if (!groupChatHistory[loggedInUser.id]) { groupChatHistory[loggedInUser.id] = {}; }
+
 
     // 6. 触发数据拉取 (适配移动端与 PC 端列表)
     fetchAndRenderReceiverList();
@@ -561,66 +747,67 @@ function getUserNicknameById(uid) {
 
 function renderActiveContainer() {
     const chatBox = document.getElementById('chatBox');
-    
-    // 【核心修复】：在清空并重新渲染前，计算当前滚动条是否处于底部区域 (预留 50px 容差)
+    if (!chatBox) return;
+
     const isAtBottom = chatBox.scrollHeight - chatBox.scrollTop <= chatBox.clientHeight + 50;
-    
-    chatBox.innerHTML = `<div class="text-center text-[11px] text-gray-400 my-1">🛡️ 聊天及流媒体数据均进行本地非对称离线解密，不留存明文于宿主服务器</div>`;
-    
+
+    chatBox.innerHTML = `
+        <div class="text-center text-[11px] text-gray-400 my-1">
+            🛡️ 聊天及流媒体数据均进行本地非对称离线解密
+        </div>
+    `;
+
     if (!loggedInUser || !currentActiveTargetId) return;
 
-    const myHistory = chatHistory[loggedInUser.id] || {};
-    const activePool = myHistory[currentActiveTargetId] || [];
+    // 👇【修复】根据当前所处聊天类型（单聊/群聊），从对应的独立缓存池中提取数据
+    let activePool = [];
+    if (currentChatType === 'group') {
+        const myGroupHistory = groupChatHistory[loggedInUser.id] || {};
+        activePool = myGroupHistory[currentActiveTargetId] || [];
+    } else {
+        const myHistory = chatHistory[loggedInUser.id] || {};
+        activePool = myHistory[currentActiveTargetId] || [];
+    }
 
     activePool.forEach(msg => {
+        // ... 下方的 DOM 渲染代码保持不变 ...
+
         const item = document.createElement('div');
-        if (parseInt(msg.sender_id) === parseInt(loggedInUser.id)) {
-            // 我发送的
+
+        const isMine = parseInt(msg.sender_id) === parseInt(loggedInUser.id);
+
+        const text = msg.decrypted_text || msg.text || "[空消息]";
+
+        
+        if (isMine) {
+
             item.className = "flex flex-col items-end space-y-1";
+
             item.innerHTML = `
-                <div class="bg-blue-600 text-white rounded-lg p-2.5 text-xs max-w-xs shadow-sm"></div>
-                <span class="text-[9px] text-gray-400">已加密外外发</span>
+                <div class="bg-blue-600 text-white rounded-lg p-2.5 text-xs max-w-xs"></div>
+                <span class="text-[9px] text-gray-400">已加密外发</span>
             `;
-            item.querySelector('.bg-blue-600').textContent = msg.text;
+
+            item.querySelector('.bg-blue-600').textContent = text;
+
         } else {
-            // 对方发来的
+
             item.className = "flex flex-col items-start space-y-1";
+
             item.innerHTML = `
                 <span class="text-[10px] text-gray-400"></span>
-                <div class="bg-white text-gray-800 rounded-lg p-2.5 text-xs max-w-xs shadow-sm border border-gray-200"></div>
+                <div class="bg-white text-gray-800 rounded-lg p-2.5 text-xs max-w-xs border"></div>
             `;
-            item.querySelector('span').textContent = getUserNicknameById(msg.sender_id);
-            
-            const contentDiv = item.querySelector('.bg-white');
 
-            // 💡【核心优化】：如果判定当前消息是文件通知，且带有完整的解密上下文，则将其渲染为可点击的超链接
-            if (msg.msg_type === 'file' && msg.file_info) {
-                contentDiv.innerHTML = ` 📎 请接收加密文件：<a href="javascript:void(0);" class="text-blue-600 underline font-bold hover:text-blue-800 break-all file-chat-link"></a> `;
-                
-                const linkEl = contentDiv.querySelector('.file-chat-link');
-                linkEl.textContent = msg.file_info.originName; // 安全插入文件名，杜绝恶意脚本注入
-                
-                // 绑定点击穿透事件：点击聊天记录里的文件名直接触发核心安全下发解密机制
-                linkEl.addEventListener('click', (e) => {
-                    e.preventDefault();
-                    downloadAndDecryptChunks(
-                        msg.file_info.dirId,
-                        msg.file_info.originName,
-                        msg.file_info.totalChunks,
-                        msg.file_info.encryptedAesKey,
-                        msg.file_info.iv,
-                        msg.file_info.messageId
-                    );
-                });
-            } else {
-                // 普通文本消息保持原生 textContent 渲染，确保绝对安全
-                contentDiv.textContent = msg.text;
-            }
+            item.querySelector('span').textContent =
+                getUserNicknameById(msg.sender_id);
+
+            item.querySelector('.bg-white').textContent = text;
         }
+
         chatBox.appendChild(item);
     });
-    
-    // 【核心修复】：仅在用户原本就在底部（或初始加载、消息极少未超出视窗）时，才触发强制探底
+
     if (isAtBottom) {
         chatBox.scrollTop = chatBox.scrollHeight;
     }
@@ -637,16 +824,20 @@ function renderActiveContainer() {
             document.querySelectorAll('.user-item').forEach(item => item.classList.remove('active'));
             
             if (targetId) {
+                currentChatType = 'private';
+                activeSession = { type: 'private', id: String(targetId) };
                 currentActiveTargetId = targetId;
+                stopGroupAutoSync();
                 document.getElementById('currentChatNode').innerText = `正在与 [ ${inputVal} ] 进行加密会话`;
                 // 如果刚好有名单对应的DOM卡片，顺便挂载高亮
                 const matchedCard = document.querySelector(`.user-item[data-uid="${targetId}"]`);
                 if (matchedCard) matchedCard.classList.add('active');
+                pullMessages(true).then(() => renderActiveContainer());
             } else {
                 currentActiveTargetId = null;
                 document.getElementById('currentChatNode').innerText = `Privacy IM 节点控制中心`;
+                renderActiveContainer();
             }
-            renderActiveContainer();
         }
 
 
@@ -670,8 +861,17 @@ function selectUser(name, id, element) {
     element.classList.add('active');
 
     // 【切换当前活跃容器标识】
+    currentChatType = 'private';
     currentActiveTargetId = parseInt(id);
-    renderActiveContainer();
+    activeSession = { type: 'private', id: String(id) };
+    stopGroupAutoSync();
+
+    // 重新拉取当前私聊消息，避免从群聊切换过来后遗留老状态
+    pullMessages(true).then(() => {
+        renderActiveContainer();
+    }).catch(() => {
+        renderActiveContainer();
+    });
 
     // 专属自适应逻辑：当手机端点击好友卡片时，瞬间进入全屏单对单精细聊天室
     if (window.innerWidth <= 768) {
@@ -741,24 +941,7 @@ async function handleRegister() {
     } catch (err) { log("注册崩溃", err.message); }
 }
 
-// async function handleLogin() {
-//     const username = document.getElementById('username').value;
-//     const password = document.getElementById('password').value;
-//     try {
-//         const res = await fetch(getApiUrl('login'), {
-//             method: 'POST',
-//             headers: { 'Content-Type': 'application/json' },
-//             body: JSON.stringify({ username, password })
-//         });
-//         const data = await res.json();
-//         if (data.code === 200) {
-//             loggedInUser = data.data;
-//             localStorage.setItem('im_panel_user', JSON.stringify(loggedInUser));
-//             activateLoginState();
-//         }
-//         log("登录结果", data);
-//     } catch (err) { log("登录失败", err.message); }
-// }
+
 
 async function handleLogin() {
     const username = document.getElementById('username').value;
@@ -774,6 +957,7 @@ async function handleLogin() {
         if (data.code === 200) {
             // 1. 赋值全局变量
             loggedInUser = data.data;
+            loadMyGroups(); // ⬅️ 加上这一行，登录后自动展示群房间名册
             // 2. 保存缓存
             localStorage.setItem('im_panel_user', JSON.stringify(loggedInUser));
             
@@ -789,93 +973,7 @@ async function handleLogin() {
     }
 }
 
-/**
- * 页面加载完成或登录成功后调用的 UI 初始化函数
- */
-// 在 ximi.js 中定义此函数
-// function initAvatarTooltip() {
-//     const avatarBox = document.getElementById('avatarBox');
-    
-//     // 增加调试日志，查看是否找到了元素
-//     if (!avatarBox) {
-//         console.log("调试：未找到 id='avatarBox' 的元素，请检查 HTML 结构");
-//         return;
-//     }
 
-//     if (typeof loggedInUser !== 'undefined' && loggedInUser && loggedInUser.id) {
-//         const nickname = loggedInUser.nickname || '无昵称';
-//         avatarBox.title = `ID: ${loggedInUser.id} (${nickname})`;
-//         console.log("调试：已成功绑定悬浮提示到 avatarBox");
-//     } else {
-//         console.log("调试：loggedInUser 尚未初始化，跳过绑定");
-//     }
-// }
-/**
- * 升级版：零延迟、秒瞬显的头像悬浮提示
- */
-/**
- * 终极、完美的零延迟、秒瞬显头像悬浮提示
- * 彻底解决两层标签重叠显示的问题
- */
-
-/**
- * 修正版：彻底消灭 "null" 顶层标签的零延迟悬浮提示
- */
-
-//function initAvatarTooltip() {
-//     const avatarBox = document.getElementById('avatarBox');
-//     if (!avatarBox) return;
-
-//     // 1. 初始化时彻底拔掉 title 属性
-//     avatarBox.removeAttribute('title');
-
-//     if (typeof loggedInUser !== 'undefined' && loggedInUser && loggedInUser.id) {
-//         const nickname = loggedInUser.nickname || '无昵称';
-//         const tooltipText = `ID: ${loggedInUser.id} (${nickname})`;
-
-//         // 2. 动态创建或获取自定义提示框
-//         let tooltip = document.getElementById('m-fast-tooltip');
-//         if (!tooltip) {
-//             tooltip = document.createElement('div');
-//             tooltip.id = 'm-fast-tooltip';
-//             tooltip.style.position = 'fixed';
-//             tooltip.style.backgroundColor = '#4b5563'; 
-//             tooltip.style.color = '#ffffff';
-//             tooltip.style.padding = '6px 10px';
-//             tooltip.style.borderRadius = '2px';
-//             tooltip.style.fontSize = '12px';
-//             tooltip.style.boxShadow = '0 10px 15px -3px rgba(0, 0, 0, 0.3)';
-//             tooltip.style.zIndex = '99999';
-//             tooltip.style.display = 'none'; 
-//             tooltip.style.pointerEvents = 'none'; 
-//             tooltip.style.whiteSpace = 'nowrap';
-//             document.body.appendChild(tooltip);
-//         }
-
-//         tooltip.innerText = tooltipText;
-
-//         // 3. 鼠标移入：不仅显示自定义框，而且死死卡住原生 title
-//         avatarBox.addEventListener('mouseenter', () => {
-//             // 🚨 核心修复：直接设为空字符串，或者直接移除。这样浏览器绝对不会弹窗
-//             avatarBox.title = ""; 
-//             avatarBox.removeAttribute('title');
-            
-//             tooltip.style.display = 'block';
-//         });
-
-//         // 4. 鼠标移动
-//         avatarBox.addEventListener('mousemove', (e) => {
-//             tooltip.style.left = (e.clientX + 12) + 'px';
-//             tooltip.style.top = (e.clientY + 12) + 'px';
-//         });
-
-//         // 5. 鼠标移出
-//         avatarBox.addEventListener('mouseleave', () => {
-//             avatarBox.title = "";
-//             tooltip.style.display = 'none';
-//         });
-//     }
-// }
 
 /**
  * 升级版：多功能零延迟悬浮提示中心
@@ -914,7 +1012,8 @@ function initAvatarTooltip() {
             }
         },
         { id: 'menuBtnChat', getText: () => '聊天记录' },
-        { id: 'menuBtnContact', getText: () => '通讯录' },
+            { id: 'menuBtnContact', getText: () => '通讯录' },
+            { id: 'menuBtnGroup', getText: () => '群组' },
         { id: 'logToggleBtn', getText: () => '运行日志' }
     ];
 
@@ -955,9 +1054,6 @@ function initAvatarTooltip() {
 
 
 
-
-
-
 // 确保 DOM 加载完成后尝试绑定
 window.addEventListener('DOMContentLoaded', () => {
     initAvatarTooltip();
@@ -974,50 +1070,127 @@ document.addEventListener('mouseover', function(e) {
 });
 
 async function sendEncryptedText() {
-    const receiver_id = resolveReceiverId(document.getElementById('receiverInput').value);
-    const text = document.getElementById('msgText').value;
-    if (!receiver_id || !text) { alert("请检查接收者和内容码流"); return; }
+
+    const isGroup = (currentChatType === 'group');
+
+    const targetId = isGroup
+        ? currentActiveTargetId
+        : resolveReceiverId(document.getElementById('receiverInput').value);
+
+    const text = document.getElementById('msgText').value.trim();
+
+    if (!targetId || !text) {
+        alert("请检查接收方/群组和发送内容！");
+        return;
+    }
+
     try {
-        log("正在获取接收者公钥...");
-        const pubKeyRes = await fetch(getApiUrl('get_public_key') + `&user_id=${receiver_id}`);
-        const pubKeyData = await pubKeyRes.json();
-        if (pubKeyData.code !== 200 || !pubKeyData.data.public_key) { alert("对方未上传公钥！"); return; }
-        
+
         const aesKey = CryptoJS.lib.WordArray.random(32).toString(CryptoJS.enc.Hex);
         const iv = CryptoJS.lib.WordArray.random(16).toString(CryptoJS.enc.Hex);
-        const encryptedContent = CryptoJS.AES.encrypt(text, CryptoJS.enc.Hex.parse(aesKey), {
-            iv: CryptoJS.enc.Hex.parse(iv), mode: CryptoJS.mode.CBC, padding: CryptoJS.pad.Pkcs7
-        }).toString();
+
+        const encryptedContent = CryptoJS.AES.encrypt(
+            text,
+            CryptoJS.enc.Hex.parse(aesKey),
+            {
+                iv: CryptoJS.enc.Hex.parse(iv),
+                mode: CryptoJS.mode.CBC,
+                padding: CryptoJS.pad.Pkcs7
+            }
+        ).toString();
+
+        let payload = {
+            sender_id: parseInt(loggedInUser.id),
+            msg_type: "text",
+            encrypt_iv: iv,
+            encrypted_content: encryptedContent,
+            receiver_id: null,
+            group_id: null,
+            encrypted_aes_key: ""
+        };
 
         const encryptor = new JSEncrypt();
-        encryptor.setPublicKey(pubKeyData.data.public_key);
-        const encryptedAesKey = encryptor.encrypt(aesKey);
 
-        const payload = {
-            sender_id: parseInt(loggedInUser.id), receiver_id, msg_type: "text",
-            encrypt_iv: iv, encrypted_aes_key: encryptedAesKey, encrypted_content: encryptedContent
-        };
-        const res = await fetch(getApiUrl('send_message'), {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-        });
-        const result = await res.json();
-        if (result.code === 200) { 
-            // 【将自己发出的内容归档进特定的独立隔离池】
-            if (!chatHistory[loggedInUser.id][receiver_id]) {
-                chatHistory[loggedInUser.id][receiver_id] = [];
+        if (isGroup) {
+
+            const res = await fetch(getApiUrl('get_group_keys') + `&group_id=${targetId}`);
+            const json = await res.json();
+
+            let encryptedKeyMap = {};
+
+            for (let member of json.data || []) {
+                if (!member.public_key) continue;
+
+                encryptor.setPublicKey(member.public_key);
+                const encKey = encryptor.encrypt(aesKey);
+
+                if (encKey) encryptedKeyMap[member.id] = encKey;
             }
-            chatHistory[loggedInUser.id][receiver_id].push({
-                sender_id: loggedInUser.id,
-                text: text
-            });
-            saveHistoryToDisk();
 
-            // 清空输入区并重新渲染受载容器
-            document.getElementById('msgText').value = ''; 
-            renderActiveContainer();
+            payload.group_id = parseInt(targetId);
+            payload.encrypted_aes_key = JSON.stringify(encryptedKeyMap);
+
+        } else {
+            const pubKeyRes = await fetch(getApiUrl('get_public_key') + `&user_id=${targetId}`);
+            const pubKeyData = await pubKeyRes.json();
+
+            if (!pubKeyData || pubKeyData.code !== 200 || !pubKeyData.data || !pubKeyData.data.public_key) {
+                alert('无法获取接收者公钥，发送终止。请确认接收者存在并已注册公钥。');
+                return;
+            }
+
+            encryptor.setPublicKey(pubKeyData.data.public_key);
+            const encAes = encryptor.encrypt(aesKey);
+            if (!encAes) {
+                alert('本地公钥加密失败，无法发送私聊消息。');
+                return;
+            }
+
+            payload.encrypted_aes_key = encAes;
+            payload.receiver_id = parseInt(targetId);
         }
-    } catch (err) { log("发送失败", err.message); }
+
+        const res = await fetch(getApiUrl('send_message'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        const result = await res.json();
+
+        if (result.code === 200) {
+            // 私聊：统一使用字符串键，并在发送成功后立即触发一次拉取刷新
+            if (isGroup) {
+                if (!groupChatHistory[loggedInUser.id]) groupChatHistory[loggedInUser.id] = {};
+                const gid = String(targetId);
+                if (!groupChatHistory[loggedInUser.id][gid]) groupChatHistory[loggedInUser.id][gid] = [];
+                groupChatHistory[loggedInUser.id][gid].push({ sender_id: loggedInUser.id, msg_type: "text", text: text, decrypted_text: text });
+                saveGroupHistoryToDisk();
+                await pullGroupMessages(gid);
+            } else {
+                if (!chatHistory[loggedInUser.id]) chatHistory[loggedInUser.id] = {};
+                const rid = String(targetId);
+                if (!chatHistory[loggedInUser.id][rid]) chatHistory[loggedInUser.id][rid] = [];
+                chatHistory[loggedInUser.id][rid].push({ sender_id: loggedInUser.id, msg_type: "text", text: text, decrypted_text: text });
+                saveHistoryToDisk();
+                // 主动拉取一次私聊消息，确保服务端已同步并触发视图刷新
+                await pullMessages(true);
+            }
+
+            document.getElementById('msgText').value = "";
+            renderActiveContainer();
+        } else {
+            console.warn('发送消息返回非 200：', result);
+            alert('发送失败：' + (result.msg || '未知错误'));
+        }
+
+    } catch (e) {
+        console.error(e);
+    }
 }
+
+
+
 
 function updateFileIndicator(input) {
     const indicator = document.getElementById('fileIndicator');
@@ -1122,117 +1295,128 @@ async function sendEncryptedFile() {
 }
 
 
-
+//==接收消息
+// ==接收消息
 async function pullMessages(isSilent = false) {
     if (!loggedInUser) return;
+
     const url = `${getApiUrl('pull_messages')}&user_id=${loggedInUser.id}`;
-    if(!isSilent) log(`🔄 链路提取中...`, `正在同步离线缓冲队列...`);
+
+    if (!isSilent) log(`🔄 链路提取中...`, `正在同步离线缓冲队列...`);
 
     try {
         const res = await fetch(url);
         const data = await res.json();
-        const fileList = document.getElementById('fileList');
 
-        if (data.code === 200) {
-            if (!data.data || data.data.length === 0) { 
-                if(!isSilent) log("📭 状态", "消息箱干净，没有新离线消息。"); 
-                return; 
-            }
+        if (data.code !== 200) return;
 
-            data.data.forEach((msg) => {
-                try {
-                    // 将昵称解析逻辑提到顶部，供文件和文本类型统一使用
-                    const senderIdStr = String(msg.sender_id);
-                    const senderUser = typeof globalUserList !== 'undefined' ? globalUserList.find(u => String(u.id) === String(senderIdStr)) : null;
-                    const senderName = senderUser ? (senderUser.nickname || `UID:${senderIdStr}`) : `UID:${senderIdStr}`;
+        const list = data.data || [];
+        if (list.length === 0) return;
 
-                    if (msg.msg_type === 'file') {
-                        const rawData = atob(msg.encrypted_content);
-                        const parts = rawData.split('|');
-                        const originName = decodeURIComponent(parts[0]);
-                        const dirId = parts[1]; 
-                        const totalChunks = parts[2] ? parseInt(parts[2]) : 0;
+        list.forEach((msg) => {
+            try {
+                const senderId = String(msg.sender_id);
+                const senderUser = globalUserList?.find(u => String(u.id) === senderId);
 
-                        // 防止重复处理：如果该分片资产节点已存在，则不重复写入右侧面板和聊天记录
-                        if (document.getElementById(`file-node-${dirId}`)) return;
+                // =========================
+                // 🔥 群聊 / 私聊 AES KEY 提取（已修复）
+                // =========================
+                let aesKeyForMe = null;
+                const decryptor = new JSEncrypt();
+                decryptor.setPrivateKey(localStorage.getItem('my_priv_key'));
 
-                        const item = document.createElement('div');
-                        item.id = `file-node-${dirId}`;
-                        item.className = "flex items-center justify-between p-2 bg-purple-100 rounded border border-purple-200 text-xs";
-                        item.innerHTML = `
-                            <div class="file-title truncate font-bold text-purple-900 mr-2 max-w-[140px]"></div>
-                            <button class="download-btn bg-purple-600 text-white px-2 py-0.5 rounded text-[10px] hover:bg-purple-700 transition">
-                                安全下发解密
-                            </button>
-                        `;
-
-                        item.querySelector('.file-title').textContent = originName;
-                        item.querySelector('.download-btn').addEventListener('click', () => {
-                            downloadAndDecryptChunks(dirId, originName, totalChunks, msg.encrypted_aes_key, msg.encrypt_iv, msg.id);
-                        });
-
-                        if(fileList.querySelector('div.italic')) fileList.innerHTML = '';
-                        fileList.appendChild(item);
-
-                        // 输出到控制台/日志面板
-                        log(`📎 收到[${senderName}]的远端加密文件`, originName);
-                        
-                        // 💡【优化】：将文件接收资产通知及解密核心元数据，同步归档到聊天气泡历史中
-                        const sender_id = msg.sender_id;
-                        if (!chatHistory[loggedInUser.id][sender_id]) {
-                            chatHistory[loggedInUser.id][sender_id] = [];
-                        }
-                        chatHistory[loggedInUser.id][sender_id].push({
-                            sender_id: sender_id,
-                            msg_type: 'file', // 标记这条消息是文件资产类型
-                            text: ` 📎 收到加密文件：${originName} `, // 兜底文本
-                            file_info: { // 注入完整的解密上下文参数
-                                dirId: dirId,
-                                originName: originName,
-                                totalChunks: totalChunks,
-                                encryptedAesKey: msg.encrypted_aes_key,
-                                iv: msg.encrypt_iv,
-                                messageId: msg.id
-                            }
-                        });
-                        saveHistoryToDisk(); // 持久化到本地缓存
-                        
-                    } else {
-                        const privKey = localStorage.getItem('my_priv_key');
-                        if (!privKey) throw new Error("缺失私钥无法破译内容");
-                        const decryptor = new JSEncrypt();
-                        decryptor.setPrivateKey(privKey);
-                        const aesKeyHex = decryptor.decrypt(msg.encrypted_aes_key);
-                        if (!aesKeyHex) throw new Error("密钥解密失败");
-
-                        const decryptedText = CryptoJS.AES.decrypt(msg.encrypted_content, CryptoJS.enc.Hex.parse(aesKeyHex), {
-                            iv: CryptoJS.enc.Hex.parse(msg.encrypt_iv), mode: CryptoJS.mode.CBC, padding: CryptoJS.pad.Pkcs7
-                        }).toString(CryptoJS.enc.Utf8);
-                        
-                        // 动态输出带有昵称的文本日志
-                        log(`✨ 收到[${senderName}]文本消息`, decryptedText);
-
-                        // 将拉取到的新消息，归档到发送人对应的隔离隔离池
-                        const sender_id = msg.sender_id;
-                        if (!chatHistory[loggedInUser.id][sender_id]) {
-                            chatHistory[loggedInUser.id][sender_id] = [];
-                        }
-                        chatHistory[loggedInUser.id][sender_id].push({
-                            sender_id: sender_id,
-                            msg_type: 'text',
-                            text: decryptedText
-                        });
-                        saveHistoryToDisk();
+                if (msg.group_id > 0 && msg.encrypted_aes_key) {
+                    const keyMap = JSON.parse(msg.encrypted_aes_key || "{}");
+                    const myId = String(loggedInUser.id);
+                    const encryptedKey = keyMap[myId];
+                    if (encryptedKey) {
+                        aesKeyForMe = decryptor.decrypt(encryptedKey);
                     }
-                } catch (err) { log("❌ 解密链路捕获异常", `错误: ${err.message}`); }
-            });
+                } else if (msg.encrypted_aes_key) {
+                    // 【新增】私聊情况直接解密
+                    aesKeyForMe = decryptor.decrypt(msg.encrypted_aes_key);
+                }
 
-            // 所有离线包处理完毕后，触发统一刷新当前视窗
-            await fetchAndRenderReceiverList();
-            renderActiveContainer();
-        }
-    } catch (err) { if(!isSilent) log("❌ 同步故障", err.message); }
+                // =========================
+                // 文件消息处理
+                // =========================
+                if (msg.msg_type === 'file') {
+                    const rawData = atob(msg.encrypted_content);
+                    const parts = rawData.split('|');
+                    const originName = decodeURIComponent(parts[0]);
+                    const dirId = parts[1];
+                    const totalChunks = parts[2] ? parseInt(parts[2]) : 0;
+
+                    if (!chatHistory[loggedInUser.id]) chatHistory[loggedInUser.id] = {};
+                    if (!chatHistory[loggedInUser.id][senderId]) {
+                        chatHistory[loggedInUser.id][senderId] = [];
+                    }
+
+                    chatHistory[loggedInUser.id][senderId].push({
+                        sender_id: msg.sender_id,
+                        msg_type: 'file',
+                        text: `📎 ${originName}`,
+                        decrypted_text: `📎 ${originName}`,
+                        file_info: {
+                            dirId,
+                            originName,
+                            totalChunks,
+                            encryptedAesKey: msg.encrypted_aes_key,
+                            iv: msg.encrypt_iv,
+                            messageId: msg.id
+                        }
+                    });
+                    saveHistoryToDisk();
+                    return;
+                }
+
+                // =========================
+                // 文本消息解密
+                // =========================
+                let decryptedText = "[无法解密]";
+                try {
+                    if (!aesKeyForMe) {
+                        throw new Error("缺少AES KEY，可能非预期接收者");
+                    }
+                    decryptedText = CryptoJS.AES.decrypt(
+                        msg.encrypted_content,
+                        CryptoJS.enc.Hex.parse(aesKeyForMe),
+                        {
+                            iv: CryptoJS.enc.Hex.parse(msg.encrypt_iv),
+                            mode: CryptoJS.mode.CBC,
+                            padding: CryptoJS.pad.Pkcs7
+                        }
+                    ).toString(CryptoJS.enc.Utf8);
+                } catch (e) {
+                    console.error("解密失败:", e);
+                }
+
+                if (!chatHistory[loggedInUser.id]) chatHistory[loggedInUser.id] = {};
+                if (!chatHistory[loggedInUser.id][senderId]) {
+                    chatHistory[loggedInUser.id][senderId] = [];
+                }
+
+                chatHistory[loggedInUser.id][senderId].push({
+                    sender_id: msg.sender_id,
+                    msg_type: 'text',
+                    text: decryptedText,
+                    decrypted_text: decryptedText
+                });
+
+                saveHistoryToDisk();
+            } catch (err) {
+                console.error("消息处理失败:", err);
+            }
+        });
+
+        await fetchAndRenderReceiverList();
+        renderActiveContainer();
+
+    } catch (err) {
+        if (!isSilent) log("❌ 同步故障", err.message);
+    }
 }
+
 
 
         async function downloadAndDecryptChunks(dirId, fileName, totalChunks, encryptedAesKey, iv, messageId) {
@@ -1369,12 +1553,6 @@ async function pullMessages(isSilent = false) {
 
 
 
-/**
- * 核心补丁：用于解析当前消息的收件人ID
- */
-/**
- * 核心补丁：用于解析当前消息的收件人ID
- */
 function resolveReceiverId(inputVal) {
     // 逻辑 1：优先从界面选中的当前聊天对象中获取
     if (currentActiveTargetId) {
@@ -1582,7 +1760,510 @@ async function pcClearServerQueue() {
     };
 }
 
+/**
+ * 核心加密机制：发送群组文本消息 (客户端分发模式)
+ * @param {number} groupId - 群组 ID
+ * @param {string} plainText - 要发送的明文
+ * @param {Array} memberList - 群成员列表，需包含 {id: UID, public_key: 'RSA公钥'}
+ */
+async function sendEncryptedGroupText(groupId, plainText, memberList) {
+    if (!memberList || memberList.length === 0) {
+        console.error("群成员列表为空，无法分发加密消息");
+        return;
+    }
+
+    try {
+        // 1. 生成此条消息专属的【一次性】 AES 密钥和 IV
+        const aesKeyHex = CryptoJS.lib.WordArray.random(16).toString(); // 32 chars
+        const ivHex = CryptoJS.lib.WordArray.random(16).toString();     // 32 chars
+
+        // 2. 使用 AES-CBC 加密消息正文（全群共享同一份密文，节省带宽和算力）
+        const encryptedContent = CryptoJS.AES.encrypt(
+            plainText, 
+            CryptoJS.enc.Utf8.parse(aesKeyHex), 
+            {
+                iv: CryptoJS.enc.Utf8.parse(ivHex),
+                mode: CryptoJS.mode.CBC,
+                padding: CryptoJS.pad.Pkcs7
+            }
+        ).toString();
+
+        // 3. 循环群成员，使用他们各自的 RSA 公钥对 AES 密钥进行加密
+        let memberKeysPayload = [];
+        let rsaEncryptor = new JSEncrypt();
+
+        for (let member of memberList) {
+            if (!member.public_key) continue; // 跳过没有公钥的异常用户
+            
+            rsaEncryptor.setPublicKey(member.public_key);
+            let encryptedAesKey = rsaEncryptor.encrypt(aesKeyHex);
+            
+            if (encryptedAesKey) {
+                memberKeysPayload.push({
+                    user_id: member.id,
+                    aes_key: encryptedAesKey
+                });
+            }
+        }
+
+        // 4. 打包并发送到后端网关
+        const payload = {
+            sender_id: currentUserId, // 全局变量，你的当前UID
+            group_id: groupId,
+            msg_type: 'text',
+            encrypted_content: encryptedContent,
+            encrypt_iv: ivHex,
+            member_keys: memberKeysPayload
+        };
+
+        const res = await fetch(`${API_BASE}?action=send_group_message`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+        if (data.code === 200) {
+            console.log(`✅ 群消息加密分发成功 (分发给 ${memberKeysPayload.length} 人)`);
+            // 此处可调用本地渲染逻辑，将自己的发言渲染到群聊窗口
+        } else {
+            console.error("❌ 群消息发送拦截:", data.msg);
+        }
+    } catch (e) {
+        console.error("群消息加密或网络异常:", e);
+    }
+}
+
+// ==================== 群聊界面 UI 逻辑 ====================
+
+// 打开群聊弹窗，默认显示“新建”状态
+function openGroupModal() {
+    document.getElementById('groupModal').classList.remove('hidden');
+    switchGroupModal('create');
+}
+
+// 关闭群聊弹窗，顺便清空输入框
+function closeGroupModal() {
+    document.getElementById('groupModal').classList.add('hidden');
+    document.getElementById('createRoomName').value = '';
+    document.getElementById('createRoomPwd').value = '';
+    document.getElementById('joinRoomName').value = '';
+    document.getElementById('joinRoomPwd').value = '';
+}
+
+// 弹窗内部 Tab 切换：新建 vs 加入 (完全不共用密码框)
+function switchGroupModal(mode) {
+    const tabCreate = document.getElementById('tabCreateGroup');
+    const tabJoin = document.getElementById('tabJoinGroup');
+    const formCreate = document.getElementById('formCreateGroup');
+    const formJoin = document.getElementById('formJoinGroup');
+
+    if (mode === 'create') {
+        tabCreate.className = "flex-1 py-3 text-sm font-bold text-blue-600 border-b-2 border-blue-600 transition";
+        tabJoin.className = "flex-1 py-3 text-sm font-bold text-gray-500 hover:text-blue-600 transition";
+        formCreate.classList.remove('hidden');
+        formJoin.classList.add('hidden');
+    } else {
+        tabJoin.className = "flex-1 py-3 text-sm font-bold text-green-600 border-b-2 border-green-600 transition";
+        tabCreate.className = "flex-1 py-3 text-sm font-bold text-gray-500 hover:text-green-600 transition";
+        formJoin.classList.remove('hidden');
+        formCreate.classList.add('hidden');
+    }
+}
 
 
+
+// 覆盖/升级手机端的 Tab 切换逻辑 (适配 4 个 Tab)
+function mSwitchTab(index) {
+    const tabs = document.querySelectorAll('#m-tabbar .m-tab');
+    const pages = document.querySelectorAll('.m-container .m-page');
+    
+    tabs.forEach((tab, i) => {
+        if (i === index) tab.classList.add('active');
+        else tab.classList.remove('active');
+    });
+    
+    pages.forEach((page, i) => {
+        if (i === index) page.classList.add('active');
+        else page.classList.remove('active');
+    });
+    
+    // 可以在这里触发群聊列表的网络拉取动作
+    // if(index === 2) { loadMyGroups(); }
+}
+
+// ==================== 群聊房间核心业务逻辑 ====================
+
+// 1. 提交新建房间
+async function submitCreateGroup() {
+    const name = document.getElementById('createRoomName').value.trim();
+    const pwd = document.getElementById('createRoomPwd').value.trim();
+    
+    if(!name || !pwd) return alert('房间名称和密码不能为空');
+    if(!loggedInUser || !loggedInUser.id) return alert('请先登录身份');
+
+    try {
+        const res = await fetch(`api.php?action=create_group`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: name, room_password: pwd, creator_id: loggedInUser.id })
+        });
+        const data = await res.json();
+        if (data.code === 200) {
+            alert('✅ 专属加密安全房间创建成功！');
+            closeGroupModal();
+            loadMyGroups(); // 实时刷新左侧/底部的群列表
+        } else {
+            alert('❌ 创建失败: ' + data.msg);
+        }
+    } catch (e) {
+        console.error("创建群组网络异常:", e);
+    }
+}
+
+// 2. 提交验证密码加入房间 (无需输入房间名)
+async function submitJoinGroup() {
+    const pwd = document.getElementById('joinRoomPwd').value.trim();
+    
+    if(!pwd) return alert('请输入房间通行密码暗号');
+    if(!loggedInUser || !loggedInUser.id) return alert('请先登录身份');
+
+    try {
+        const res = await fetch(`api.php?action=join_group`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ room_password: pwd, user_id: loggedInUser.id })
+        });
+        const data = await res.json();
+        if (data.code === 200) {
+            alert(`✅ 密码验证通过！已成功进入房间: 【${data.room_name}】`);
+            closeGroupModal();
+            loadMyGroups(); // 实时刷新左侧/底部的群列表
+        } else {
+            alert('❌ 进房失败: ' + data.msg);
+        }
+    } catch (e) {
+        console.error("加入群组网络异常:", e);
+    }
+}
+
+// 3. 从云端拉取我已加入的群聊名册
+async function loadMyGroups() {
+    // 1. 获取正确的存储键 (之前调试确认是 im_panel_user)
+    const userRaw = localStorage.getItem('im_panel_user');
+    
+    // 2. 健壮性检查：如果没有数据，直接返回空列表，防止报错中断程序
+    if (!userRaw) {
+        console.warn("【系统】本地无用户缓存，停止加载群组");
+        renderGroupListToUI([]); 
+        return;
+    }
+
+    let userId;
+    try {
+        const userObj = JSON.parse(userRaw);
+        userId = userObj.id; // 获取 ID
+    } catch (e) {
+        console.error("【系统】用户数据解析失败:", e);
+        renderGroupListToUI([]);
+        return;
+    }
+
+    // 3. 如果解析后没有 ID，则停止
+    if (!userId) {
+        console.error("【系统】未找到用户ID");
+        renderGroupListToUI([]);
+        return;
+    }
+
+    // 4. 执行请求
+    try {
+        const url = `api.php?action=list_groups&user_id=${userId}`;
+        const res = await fetch(url);
+        
+        if (!res.ok) throw new Error("网络请求失败");
+        
+        const data = await res.json();
+
+        // 5. 数据处理：兼容不同的后端返回结构
+        // 如果后端返回 {code: 200, data: [...]}，取 data；否则取整个 data
+        const groupList = (data && data.data) ? data.data : (Array.isArray(data) ? data : []);
+        
+        renderGroupListToUI(groupList);
+        
+    } catch (e) {
+        console.error("【系统】加载群组列表请求异常:", e);
+        renderGroupListToUI([]); // 失败时渲染空列表，防止页面卡死
+    }
+}
+
+// 4. 同步动态渲染至 PC 端和手机端两个群聊列表容器中
+// 4. 同步动态渲染至 PC 端和手机端两个群聊列表容器中
+function renderGroupListToUI(groupList) {
+    const container = document.getElementById('groupListContainer');
+    if (!container) return; // 安全防御
+    
+    // 1. 强制重置容器，先放入功能按钮
+    container.innerHTML = `
+        <div class="user-item bg-blue-50 border border-blue-100 rounded mb-2 flex justify-center text-blue-600 font-bold shadow-sm cursor-pointer py-2"
+             onclick="openGroupModal()">
+            <span>+ 新建 / 加入群聊房间</span>
+        </div>
+        <div id="groupListWrapper"></div>
+    `;
+
+    const wrapper = document.getElementById('groupListWrapper');
+
+    // 2. 检查是否有数据，再决定渲染列表还是显示提示
+    if (groupList && Array.isArray(groupList) && groupList.length > 0) {
+        let listHtml = '';
+        
+        groupList.forEach(group => {
+            const safeName = String(group.name).replace(/'/g, "\\'");
+            
+            // 🔥 修改点：绑定 joinGroup 并传入 this (当前 DOM 元素)
+            listHtml += `
+                <div class="user-item p-2 flex items-center hover:bg-gray-100 cursor-pointer rounded transition mb-1" 
+                     onclick="joinGroup(${group.id}, '${safeName}', this)">
+                    <div class="w-8 h-8 bg-green-500 text-white flex items-center justify-center rounded text-xs flex-shrink-0">
+                        🧑‍🤝‍🧑
+                    </div>
+                    <div class="ml-2 overflow-hidden flex-1">
+                        <div class="text-xs font-bold text-gray-800 truncate">${group.name}</div>
+                        <div class="text-[10px] text-gray-400 truncate">ID: #${group.id}</div>
+                    </div>
+                </div>
+            `;
+        });
+        
+        wrapper.innerHTML = listHtml;
+    } else {
+        wrapper.innerHTML = '<div class="text-center text-xs text-gray-400 py-8">暂无加入的群聊</div>';
+    }
+}
+
+// 异步载入我加入的所有群组房间并渲染到侧边栏
+function loadMyGroupList() {
+    const loginUser = JSON.parse(localStorage.getItem('login_user') || '{}');
+    if (!loginUser.id) return;
+
+    fetch(`api.php?action=list_my_groups&user_id=${loginUser.id}`)
+        .then(res => res.json())
+        .then(res => {
+            if (res.code === 200) {
+                renderGroupListUI(res.data);
+            }
+        })
+        .catch(err => console.error("加载房间列表失败:", err));
+}
+
+// 物理渲染侧边栏房间 HTML 列表
+function renderGroupListUI(groups) {
+    const container = document.getElementById('group-list-box'); // 请确保 index.html 中有此 id 的容器
+    if (!container) return;
+    
+    if (groups.length === 0) {
+        container.innerHTML = `<div class="empty-tip" style="padding:10px;color:#999;font-size:12px;text-align:center;">暂未加入任何房间</div>`;
+        return;
+    }
+
+    let html = '';
+    groups.forEach(g => {
+        html += `
+            <div class="chat-item group-item" onclick="openGroupChatWindow(${g.id}, '${g.name}')" style="padding: 12px; margin-bottom: 5px; border-radius: 8px; cursor: pointer; transition: all 0.2s; background: rgba(255,255,255,0.4); backdrop-filter: blur(5px);">
+                <div style="font-weight: 600; color: #333;">🏢 ${g.name}</div>
+                <div style="font-size: 11px; color: #777; margin-top: 2px;">房间群聊频道 (ID: ${g.id})</div>
+            </div>
+        `;
+    });
+    container.innerHTML = html;
+}
+// 点击群组，激活并展现对应的群聊面板
+function openGroupChatWindow(groupId, groupName) {
+    currentChatType = 'group';
+    currentActiveTargetId = groupId;
+    currentActiveTargetName = groupName;
+
+    // 1. 动态更新主聊天窗口顶部的标题（比如：🏢 研发公共讨论组）
+    const chatTitleEl = document.getElementById('active-chat-title');
+    if (chatTitleEl) {
+        chatTitleEl.innerHTML = `🏢 ${groupName} <span style="font-size:12px; font-weight:normal; color:#888;">(群聊房间)</span>`;
+    }
+
+    // 2. 清空聊天历史渲染框，等待即时拉取群消息填入
+    const msgContainer = document.getElementById('chat-messages-container');
+    if (msgContainer) {
+        msgContainer.innerHTML = ''; 
+    }
+
+    // 3. 设高亮样式
+    document.querySelectorAll('.chat-item').forEach(el => el.classList.remove('active-selected'));
+    // 可以为当前点击的 item 加高亮
+
+    console.log(`已成功切入房间 [${groupName}] 的群聊天界面`);
+    
+    // 立即执行一次增量拉取刷新
+    if (typeof pullMessagesFromServer === 'function') {
+        pullMessagesFromServer();
+    }
+}
+
+// 🔥 增强版群聊点击处理
+function joinGroup(groupId, groupName, element) {
+    // 1. 切换全局状态机到群聊模式
+    currentChatType = 'group';
+    currentActiveTargetId = parseInt(groupId);
+    currentActiveTargetName = groupName;
+
+    // 2. 核心 UI 切换：隐藏可能存在的名片面板，强制显示聊天区域
+    const infoPanel = document.getElementById('userInfoPanel');
+    if (infoPanel) infoPanel.classList.add('hidden');
+    
+    const chatMessages = document.getElementById('chatMessages');
+    const chatInputArea = document.getElementById('chatInputArea') || document.querySelector('.h-36');
+    if (chatMessages) chatMessages.classList.remove('hidden');
+    if (chatInputArea) chatInputArea.classList.remove('hidden');
+
+    // 3. 更新顶部标题
+    const title = document.getElementById('currentChatNode');
+    if (title) {
+        title.innerText = `正在群聊：[ ${groupName} ]`;
+    }
+
+    // 4. 左侧列表高亮排他控制
+    document.querySelectorAll('.user-item').forEach(item => item.classList.remove('active'));
+    if (element) {
+        element.classList.add('active');
+    }
+
+    // 5. 核心：立即拉取群消息并渲染视窗
+    pullGroupMessages(groupId);
+    // 启动群聊轮询
+    startGroupAutoSync();
+    renderActiveContainer();
+
+    // 6. 手机端自适应：点击后瞬间进入聊天主面板
+    if (window.innerWidth <= 768 && typeof setMobileView === 'function') {
+        setMobileView('chat');
+    }
+    
+    console.log(`[状态同步] 已切换为群聊模式，群ID: ${groupId}`);
+}
+
+/**
+ * 完整修复版：群聊消息拉取与解密
+ * 修复了：
+ * 1. 之前直接使用 chatHistory 导致的数据串台（改为使用 groupChatHistory）
+ * 2. 之前未对群消息进行解密直接显示导致为空的问题
+ * 3. 增强了容错性与持久化保存
+ */
+async function pullGroupMessages(groupId) {
+    try {
+        const res = await fetch(getApiUrl('get_group_messages') + `&group_id=${groupId}`);
+        const json = await res.json();
+
+        if (json.code !== 200) return;
+
+        if (!groupChatHistory[loggedInUser.id]) {
+            groupChatHistory[loggedInUser.id] = {};
+        }
+
+        const rawMsgs = json.data || [];
+        
+        // 使用 map 处理解密逻辑
+        const processedMsgs = rawMsgs.map(msg => {
+            let decryptedText = "[无法解密]";
+
+            if (msg.msg_type === 'file') {
+                const rawData = atob(msg.encrypted_content);
+                const parts = rawData.split('|');
+                decryptedText = `📎 ${decodeURIComponent(parts[0])}`;
+            } else {
+                // 1. 获取 AES 密钥
+                const aesKey = getMyAesKeyFromGroup(msg.encrypted_aes_key);
+                
+                if (aesKey) {
+                    try {
+                        // 2. 执行 AES 解密
+                        const bytes = CryptoJS.AES.decrypt(
+                            msg.encrypted_content,
+                            CryptoJS.enc.Hex.parse(aesKey), // 确保是 Hex 格式
+                            {
+                                iv: CryptoJS.enc.Hex.parse(msg.encrypt_iv),
+                                mode: CryptoJS.mode.CBC,
+                                padding: CryptoJS.pad.Pkcs7
+                            }
+                        );
+                        const result = bytes.toString(CryptoJS.enc.Utf8);
+                        decryptedText = result || "[解密内容为空]";
+                    } catch (e) {
+                        console.error("AES 解密异常:", e);
+                    }
+                }
+            }
+
+            return {
+                ...msg,
+                text: decryptedText,
+                decrypted_text: decryptedText
+            };
+        });
+
+        groupChatHistory[loggedInUser.id][groupId] = processedMsgs;
+        saveGroupHistoryToDisk(); 
+        renderActiveContainer();
+
+    } catch (e) {
+        console.error("群消息处理失败", e);
+    }
+}
+
+function decryptMessage(msg) {
+
+    try {
+
+        const aesKey = msg.aes_key || msg.decrypted_key || null;
+
+        if (!aesKey) return "[无法解密]";
+
+        const bytes = CryptoJS.AES.decrypt(
+            msg.encrypted_content,
+            aesKey, // ✅ 关键修复：直接字符串
+            {
+                iv: CryptoJS.enc.Hex.parse(msg.encrypt_iv),
+                mode: CryptoJS.mode.CBC,
+                padding: CryptoJS.pad.Pkcs7
+            }
+        );
+
+        const result = bytes.toString(CryptoJS.enc.Utf8);
+
+        return result && result.length > 0
+            ? result
+            : "[解密失败]";
+
+    } catch (e) {
+        console.error("解密失败", e);
+        return "[解密错误]";
+    }
+}
+// 辅助函数：从加密映射表中提取当前用户的 AES KEY
+function getMyAesKeyFromGroup(encryptedAesKeyJson) {
+    try {
+        const keyMap = JSON.parse(encryptedAesKeyJson || "{}");
+        const myId = String(loggedInUser.id);
+        const encryptedKey = keyMap[myId]; // 获取属于我自己的那部分密文
+
+        if (!encryptedKey) return null;
+
+        // 执行 RSA 解密
+        const decryptor = new JSEncrypt();
+        decryptor.setPrivateKey(localStorage.getItem('my_priv_key'));
+        return decryptor.decrypt(encryptedKey); // 返回解密后的 AES KEY 字符串
+    } catch (e) {
+        console.error("RSA 解密失败:", e);
+        return null;
+    }
+}
 // 保证点击设置菜单内部时，不会触发 document 的隐藏事件
 document.getElementById('wechatSettingsMenu').addEventListener('click', (e) => e.stopPropagation());

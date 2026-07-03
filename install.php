@@ -28,49 +28,118 @@ foreach ($optional_extensions as $ext) {
 }
 
 $curl_enabled = extension_loaded('curl');
+// 核心文件列表
 $file_list = ['db.php', 'admin.php', 'api.php', 'ximi.js', 'web.js', 'crypto-js.min.js', 'index.html', 'favicon.ico'];
 
 // ========================================================
-// 3. 异步修复 API 接口 (仅当 curl 开启时有效)
+// 3. 异步 API 接口：文件校验与修复 (使用 CURL)
 // ========================================================
-if (isset($_GET['action']) && $_GET['action'] === 'repair_file') {
+if (isset($_GET['action'])) {
     header('Content-Type: application/json');
-    if (!$curl_enabled) {
-        die(json_encode(['status' => 'error', 'msg' => '缺少CURL扩展']));
-    }
-    $file = $_POST['file'] ?? '';
-    if (!in_array($file, $file_list)) {
-        die(json_encode(['status' => 'error', 'msg' => '非法文件']));
+    $base_url = "https://www.ximi.me/usr/demo/xm-im/v120/";
+
+    // --- A. 校验完整性逻辑 ---
+    if ($_GET['action'] === 'check_integrity') {
+        clearstatcache(); // 强制清除本地 PHP 文件状态缓存
+
+        // 加上时间戳防止CDN或浏览器缓存
+        $url = $base_url . 'hash.json?_t=' . time();
+        
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+        
+        $hash_json = curl_exec($ch);
+        $error = curl_error($ch);
+        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($hash_json === false) {
+            die(json_encode(['error' => 'CURL获取失败: ' . $error]));
+        }
+        if ($http_code !== 200) {
+            die(json_encode(['error' => '服务器返回状态码: ' . $http_code]));
+        }
+
+        $remote_hashes = json_decode($hash_json, true);
+        if (!$remote_hashes) {
+            die(json_encode(['error' => '无法解析远程JSON，数据可能为空或格式错误']));
+        }
+
+        $results = [];
+        foreach ($file_list as $file) {
+            $path = __DIR__ . '/' . $file;
+            if (!file_exists($path)) {
+                $results[$file] = 'Missing';
+            } else {
+                $local_md5 = md5_file($path);
+                $remote_md5 = isset($remote_hashes[$file]) ? $remote_hashes[$file]['md5'] : 'NOT_FOUND';
+                
+                if ($remote_md5 === 'NOT_FOUND') {
+                    $results[$file] = 'Unknown';
+                } elseif ($local_md5 !== $remote_md5) {
+                    $results[$file] = 'Tampered';
+                } else {
+                    $results[$file] = 'Normal';
+                }
+            }
+        }
+        echo json_encode($results);
+        exit;
     }
 
-    $base_url = "https://www.ximi.me/usr/demo/xm-im/";
-    $save_to = __DIR__ . '/' . $file;
-    $tmp_zip = $save_to . '.zip';
-    
-    $ch = curl_init($base_url . $file . ".zip");
-    $fp = fopen($tmp_zip, 'w+');
-    curl_setopt($ch, CURLOPT_FILE, $fp);
-    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
-    $success = curl_exec($ch);
-    $error = curl_error($ch);
-    curl_close($ch);
-    fclose($fp);
+    // --- B. 修复单文件逻辑 (包含 .zip 伪装下载与重命名机制) ---
+    if ($_GET['action'] === 'repair_file' && isset($_POST['file'])) {
+        $file = $_POST['file'];
+        
+        // 安全校验：防止任意文件下载
+        if (!in_array($file, $file_list)) {
+            die(json_encode(['status' => 'error', 'msg' => '非法的文件请求']));
+        }
 
-    if ($success && file_exists($tmp_zip)) {
-        rename($tmp_zip, $save_to);
-        echo json_encode(['status' => 'success']);
-    } else {
-        echo json_encode(['status' => 'error', 'msg' => $error ?: '下载失败']);
+        // 远端文件附加了 .zip 后缀，以此绕过服务器对直接下载的限制
+        $remote_file = $file . '.zip';
+        $url = $base_url . $remote_file . "?_t=" . time(); // 绕过缓存拉取最新文件
+        
+        $tmp_zip = __DIR__ . '/' . $remote_file; // 临时存为带 .zip 的文件
+        $save_to = __DIR__ . '/' . $file;        // 最终要重命名的目标文件
+
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+        $file_content = curl_exec($ch);
+        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($file_content !== false && $http_code === 200) {
+            // 1. 将下载的内容存入临时 .zip 文件
+            file_put_contents($tmp_zip, $file_content);
+            
+            // 2. 如果成功存入，执行重命名去掉 .zip 后缀
+            if (file_exists($tmp_zip)) {
+                rename($tmp_zip, $save_to);
+                echo json_encode(['status' => 'success']);
+            } else {
+                echo json_encode(['status' => 'error', 'msg' => '文件下载后重命名失败']);
+            }
+        } else {
+            echo json_encode(['status' => 'error', 'msg' => '下载失败, HTTP: ' . $http_code]);
+        }
+        exit;
     }
-    exit;
 }
 
 // ========================================================
 // 4. 表单提交与配置文件生成
 // ========================================================
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['dir_name'])) {
     if (!$install_ok) die("环境检测未通过，无法继续安装！");
 
     function rand_str($len) {
@@ -97,7 +166,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     file_put_contents(__DIR__ . '/setting.php', $config_content);
 
-    // 优化后的安装成功页面，保持统一的毛玻璃 UI 风格
+    // 优化后的安装成功页面
     echo '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><script src="https://cdn.tailwindcss.com"></script><title>安装成功 - ximi IM</title></head>
     <body class="bg-gradient-to-br from-slate-100 to-gray-200 flex items-center justify-center min-h-screen p-4">
     <div class="bg-white/70 backdrop-blur-xl border border-white/50 p-10 rounded-3xl shadow-2xl text-center max-w-md w-full">
@@ -122,14 +191,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <title>ximi IM - 部署向导</title>
 <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; }
-    /* 毛玻璃基础特效 */
     .glass-panel {
         background: rgba(255, 255, 255, 0.75);
         backdrop-filter: blur(20px);
         -webkit-backdrop-filter: blur(20px);
         border: 1px solid rgba(255, 255, 255, 0.6);
     }
-    /* 交互式步骤切换动画 */
     .step-content {
         display: none;
         opacity: 0;
@@ -141,7 +208,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         opacity: 1;
         transform: translateX(0);
     }
-    /* 极简终端风格展示 */
     .term-text { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
 </style>
 </head>
@@ -258,15 +324,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         </tbody>
                     </table>
                 </div>
-                <li class="" style="
-    margin-top: -9px;
-    padding-bottom: 0.5rem;
-    color: #88909a;
-    font-size: 14px;
-    margin-left: 22px;
-">
-                    curl为非必需扩展,仅用于自动修复文件缺失!
-                </li>
+                <div class="-mt-2 pb-2 text-slate-400 text-[14px] ml-5">
+                    * curl为非必需扩展, 但建议安装以启用自动化文件修复功能。
+                </div>
                 <?php if (!$install_ok): ?>
                 <div class="bg-red-50 border border-red-100 text-red-600 px-4 py-3 rounded-lg text-sm mb-4">
                     ❌ 核心必需扩展缺失，请配置 php.ini 或在服务器面板（如 1Panel/Synology）中安装后重试。
@@ -282,27 +342,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <div class="flex justify-between items-end mb-6">
                     <div>
                         <h2 class="text-2xl font-bold text-slate-800">系统文件校验</h2>
-                        <p class="text-xs text-slate-500 mt-1">检测程序主体文件完整性，支持自动从云端获取缺失项。</p>
+                        <p class="text-xs text-slate-500 mt-1">检测程序主体文件完整性，自动识别篡改与缺失。</p>
                     </div>
-                    <?php if ($curl_enabled): ?>
-                    <button id="repair-all-btn" class="bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white transition-colors px-3 py-1.5 rounded-lg text-xs font-medium shadow-sm">一键修复全部</button>
-                    <?php endif; ?>
+                    <button id="check-integrity-btn" class="bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white transition-colors px-3 py-1.5 rounded-lg text-xs font-medium shadow-sm">开始校验</button>
                 </div>
 
                 <div id="file-list" class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
-                    <?php foreach ($file_list as $file): 
-                        $exists = file_exists(__DIR__ . '/' . $file);
-                    ?>
+                    <?php foreach ($file_list as $file): ?>
                     <div class="bg-white/60 border border-white p-3 rounded-xl flex justify-between items-center shadow-sm" data-file="<?=$file?>">
                         <span class="text-sm font-medium text-slate-700 term-text"><?=$file?></span>
-                        <div class="file-status text-xs">
-                            <?php if ($exists): ?>
-                                <span class="text-emerald-500 font-semibold bg-emerald-50 px-2 py-1 rounded">Normal</span>
-                            <?php elseif ($curl_enabled): ?>
-                                <button onclick="repairFile('<?=$file?>')" class="text-blue-500 hover:text-blue-700 font-medium bg-blue-50 px-2 py-1 rounded transition-colors">自动修复</button>
-                            <?php else: ?>
-                                <span class="text-slate-400 italic">缺失 (需手动上传)</span>
-                            <?php endif; ?>
+                        <div class="file-status text-xs" id="status-<?=$file?>">
+                            <span class="text-slate-400">待检测</span>
                         </div>
                     </div>
                     <?php endforeach; ?>
@@ -336,7 +386,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <button id="btn-prev" class="px-5 py-2.5 rounded-xl text-sm font-medium text-slate-600 hover:bg-white/50 transition-colors hidden">
                     返回上一步
                 </button>
-                <div class="flex-1"></div> <button id="btn-next" class="px-8 py-2.5 rounded-xl text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-500/30 transition-all">
+                <div class="flex-1"></div> 
+                <button id="btn-next" class="px-8 py-2.5 rounded-xl text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-500/30 transition-all">
                     下一步
                 </button>
                 <button id="btn-install" class="px-8 py-2.5 rounded-xl text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 shadow-lg shadow-emerald-500/30 transition-all hidden" onclick="document.getElementById('install-form').submit()">
@@ -348,17 +399,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </div>
 
 <script>
-// --- 交互式步骤导航逻辑 ---
+// --- UI 导航逻辑 ---
 let currentStep = 1;
 const totalSteps = 4;
 const envPassed = <?= $install_ok ? 'true' : 'false' ?>;
 
 function updateUI() {
-    // 内容区切换
     document.querySelectorAll('.step-content').forEach(el => el.classList.remove('active'));
     document.getElementById(`step-${currentStep}`).classList.add('active');
 
-    // 侧边栏状态更新
     for (let i = 1; i <= totalSteps; i++) {
         const icon = document.querySelector(`#nav-step-${i} .nav-icon`);
         if (i < currentStep) {
@@ -373,7 +422,6 @@ function updateUI() {
         }
     }
 
-    // 按钮显隐逻辑
     document.getElementById('btn-prev').style.display = currentStep > 1 ? 'block' : 'none';
     
     if (currentStep === totalSteps) {
@@ -384,7 +432,6 @@ function updateUI() {
         document.getElementById('btn-install').style.display = 'none';
     }
 
-    // 环境检测未通过，锁定第2步
     if (currentStep === 2 && !envPassed) {
         document.getElementById('btn-next').disabled = true;
         document.getElementById('btn-next').classList.add('opacity-50', 'cursor-not-allowed');
@@ -399,50 +446,75 @@ function updateUI() {
 document.getElementById('btn-next').addEventListener('click', () => {
     if (currentStep < totalSteps) { currentStep++; updateUI(); }
 });
-
 document.getElementById('btn-prev').addEventListener('click', () => {
     if (currentStep > 1) { currentStep--; updateUI(); }
 });
 
-// --- 原有的异步文件修复逻辑无缝接入 ---
+// --- 文件校验逻辑 (加入时间戳防缓存) ---
+document.getElementById('check-integrity-btn').addEventListener('click', async function() {
+    const btn = this;
+    btn.innerHTML = '正在校验...';
+    btn.disabled = true;
+
+    try {
+        const timestamp = new Date().getTime();
+        const response = await fetch(`?action=check_integrity&_t=${timestamp}`);
+        const data = await response.json();
+        
+        if (data.error) {
+            alert(data.error);
+            btn.innerHTML = '校验异常';
+            btn.disabled = false;
+            return;
+        }
+
+        for (const [file, status] of Object.entries(data)) {
+            const el = document.getElementById(`status-${file}`);
+            if (!el) continue;
+
+            if (status === 'Normal') {
+                el.innerHTML = '<span class="text-emerald-500 font-semibold bg-emerald-50 px-2 py-1 rounded">Normal</span>';
+            } else if (status === 'Missing') {
+                el.innerHTML = `<button onclick="repairFile('${file}')" class="text-red-500 font-bold bg-red-50 px-2 py-1 rounded shadow-sm hover:bg-red-100 transition-colors">缺失 (修复)</button>`;
+            } else if (status === 'Tampered') {
+                el.innerHTML = `<button onclick="repairFile('${file}')" class="text-amber-600 font-bold bg-amber-50 px-2 py-1 rounded shadow-sm hover:bg-amber-100 transition-colors">被篡改 (覆盖)</button>`;
+            } else if (status === 'Unknown') {
+                el.innerHTML = `<span class="text-gray-500 bg-gray-50 px-2 py-1 rounded">未记录</span>`;
+            }
+        }
+        btn.innerHTML = '重新校验';
+        btn.disabled = false;
+    } catch (e) {
+        btn.innerHTML = '校验失败';
+        btn.disabled = false;
+        console.error('校验错误:', e);
+    }
+});
+
+// --- 单文件修复逻辑 ---
 async function repairFile(filename) {
-    const el = document.querySelector(`[data-file="${filename}"] .file-status`);
-    el.innerHTML = '<span class="text-amber-500 bg-amber-50 px-2 py-1 rounded font-medium animate-pulse">Pulling...</span>';
+    const el = document.getElementById(`status-${filename}`);
+    el.innerHTML = '<span class="text-amber-500 bg-amber-50 px-2 py-1 rounded font-medium animate-pulse">下载中...</span>';
+    
     const formData = new FormData();
     formData.append('file', filename);
+    
     try {
         const response = await fetch('?action=repair_file', { method: 'POST', body: formData });
         const result = await response.json();
+        
         if (result.status === 'success') {
-            el.innerHTML = '<span class="text-emerald-500 font-semibold bg-emerald-50 px-2 py-1 rounded">Fixed</span>';
+            el.innerHTML = '<span class="text-emerald-500 font-semibold bg-emerald-50 px-2 py-1 rounded">已修复</span>';
         } else {
-            el.innerHTML = `<button class="text-red-500 hover:text-red-700 font-medium bg-red-50 px-2 py-1 rounded" onclick="repairFile('${filename}')">重试</button>`;
+            el.innerHTML = `<button class="text-red-500 hover:text-red-700 font-medium bg-red-50 px-2 py-1 rounded" onclick="repairFile('${filename}')">失败(重试)</button>`;
+            alert(result.msg);
         }
     } catch (e) {
-        el.innerHTML = `<button class="text-red-500 hover:text-red-700 font-medium bg-red-50 px-2 py-1 rounded" onclick="repairFile('${filename}')">Error(重试)</button>`;
+        el.innerHTML = `<button class="text-red-500 hover:text-red-700 font-medium bg-red-50 px-2 py-1 rounded" onclick="repairFile('${filename}')">错误(重试)</button>`;
     }
 }
 
-document.getElementById('repair-all-btn')?.addEventListener('click', async function() {
-    const btn = this;
-    btn.disabled = true;
-    btn.innerHTML = '修复进行中...';
-    btn.classList.add('opacity-50', 'cursor-not-allowed');
-    
-    const buttons = document.querySelectorAll('#file-list .file-status button');
-    for (const actionBtn of buttons) { 
-        actionBtn.click(); 
-        await new Promise(r => setTimeout(r, 800)); 
-    }
-    
-    setTimeout(() => {
-        btn.innerHTML = '执行完毕';
-        btn.classList.remove('text-blue-600', 'bg-blue-50');
-        btn.classList.add('text-emerald-600', 'bg-emerald-50');
-    }, 1000);
-});
-
-// 初始化界面
+// 页面初始化
 updateUI();
 </script>
 </body>

@@ -5,13 +5,10 @@
 
 // 移动端内部状态
 let mCurrentTab = 0;
-const mTitles = ["聊天", "通讯录", "配置"];
+const mTitles = ["聊天", "通讯录","群聊", "配置"];
 let mActiveTargetId = null;
 let mSyncTimer = null;
 let mPullTimer = null;
-
-
-
 
 // ==================== 移动端长按触控状态机变量 ====================
 let mTouchTimer = null;
@@ -20,55 +17,6 @@ let mTouchStartPos = { x: 0, y: 0 };
 let mTargetActionUid = null;
 let mTargetActionName = null;
 
-/**
- * 升级版：渲染聊天记录列表 (支持长按与防滚动误触)
- */
-/**
- * 修复版：渲染聊天记录列表
- * 1. 强制绑定 onclick 事件以触发跳转
- * 2. 保留 ontouch 事件用于长按逻辑
- */
-function mRenderChatList() {
-    const container = document.getElementById('m-page-msg');
-    const myHistory = chatHistory[loggedInUser.id] || {};
-    const activeIds = Object.keys(myHistory);
-    
-    if (activeIds.length === 0) {
-        container.innerHTML = '<div class="p-6 text-center text-gray-400 text-sm">暂无聊天记录</div>';
-        return;
-    }
-    
-    const list = globalUserList.filter(u => String(u.id) !== String(loggedInUser.id) && activeIds.includes(String(u.id)));
-    
-    container.innerHTML = list.map(u => {
-        const name = u.nickname || u.username;
-        const char = name.substring(0, 1).toUpperCase();
-        
-        // 提取最后一条消息作为摘要
-        const msgs = myHistory[u.id] || [];
-        const lastMsg = msgs.length > 0 ? msgs[msgs.length - 1].text : '';
-        
-        // 【关键修复】：增加了 onclick="mStartChat('${u.id}')"
-        // 同时保留了原有的 ontouch 事件处理长按菜单
-        return `
-            <div class="m-chat-item" 
-                 data-uid="${u.id}" 
-                 data-name="${name}"
-                 onclick="mStartChat('${u.id}')"
-                 ontouchstart="mHandleTouchStart(event, this)"
-                 ontouchmove="mHandleTouchMove(event)"
-                 ontouchend="mHandleTouchEnd(event, this)">
-                <div class="m-avatar">${char}</div>
-                <div class="flex-1 overflow-hidden">
-                    <div class="flex justify-between items-center">
-                        <div class="font-medium text-[16px] text-[#1a1a1a]">${name}</div>
-                    </div>
-                    <div class="text-gray-400 text-[13px] mt-1 truncate">${lastMsg}</div>
-                </div>
-            </div>
-        `;
-    }).join('');
-}
 
 /**
  * 移动端：切换到指定用户的聊天窗口
@@ -161,29 +109,27 @@ window.startAutoPull = function(interval) {
 
 
 
-
-
-// 核心循环：将 ximi.js 的数据状态实时映射到手机端界面
+// 核心循环：将 ximi.js 的数据状态实时映射到手机端界面的外层列表
 function mLoopRender() {
-    // 判断登录状态
+    // 1. 判断登录状态
     const authPage = document.getElementById('m-auth-page');
     if (!loggedInUser) {
-        if(authPage.classList.contains('-translate-y-full')) {
+        if(authPage && authPage.classList.contains('-translate-y-full')) {
             authPage.classList.remove('-translate-y-full'); // 弹出登录页
         }
         return;
     } else {
-        authPage.classList.add('-translate-y-full'); // 隐藏登录页
+        if(authPage) authPage.classList.add('-translate-y-full'); // 隐藏登录页
     }
 
-    // 更新联系人与消息列表
-    if (mCurrentTab === 0) mRenderChatList();
-    if (mCurrentTab === 1) mRenderContacts();
+    // 2. 仅更新外层的各个 Tab 列表视图
+    if (mCurrentTab === 0 && typeof mRenderChatList === 'function') mRenderChatList();
+    if (mCurrentTab === 1 && typeof mRenderContacts === 'function') mRenderContacts();
+    if (mCurrentTab === 2 && typeof mRenderGroupList === 'function') mRenderGroupList();
     
-    // 如果当前正处于聊天界面中，同步刷新气泡
-    if (mActiveTargetId && !document.getElementById('m-chat-window').classList.contains('translate-x-full')) {
-        mRenderChatHistory();
-    }
+    // 🚨 核心修复：去掉了旧版 mRenderChatHistory 的调用！
+    // 因为现在私聊和群聊已经拥有独立的 mPrivateTimer 和 mGroupTimer 负责刷新气泡，
+    // 全局 Loop 不需要再插手聊天框内部，彻底解决报错死锁问题。
 }
 
 // ============== 鉴权代理 ==============
@@ -229,11 +175,14 @@ function mSwitchTab(index) {
     if (headerTitle) headerTitle.innerText = mTitles[index];
     
     // 2. 切换页面显隐 (active)
+    // ⚠️ 注意：数组顺序必须严格对应 mTitles ["聊天", "通讯录", "群聊", "配置"]
     const pages = [
-        document.getElementById("m-page-msg"), 
-        document.getElementById("m-page-contact"), 
-        document.getElementById("m-page-settings")
+        document.getElementById("m-page-msg"),      // index 0: 聊天
+        document.getElementById("m-page-contact"),  // index 1: 通讯录
+        document.getElementById("m-page-group"),    // index 2: 群聊
+        document.getElementById("m-page-settings")  // index 3: 配置
     ];
+    
     pages.forEach(p => p && p.classList.remove("active"));
     if (pages[index]) pages[index].classList.add("active");
 
@@ -245,47 +194,87 @@ function mSwitchTab(index) {
         if (tabs[index]) tabs[index].classList.add("active");
     }
 
-    // 4. 【核心修复】根据切换的 Tab 分流执行对应的渲染逻辑
+    // 4. 【核心逻辑分流】
     
-    // 先清理聊天的轮询定时器，避免在其他页面后台空转
+    // 每次切换页面时，先清理聊天的轮询定时器，防止干扰
     if (window.mMsgLoopTimer) {
         clearInterval(window.mMsgLoopTimer);
         window.mMsgLoopTimer = null;
     }
 
     if (index === 0) {
-        // ================= 聊天页 (Index 0) =================
-        console.log("进入手机端聊天页，开启实时消息轮询...");
-        
-        // 立即渲染一次
+        // ================= 聊天页 =================
+        console.log("进入手机端聊天页，开启轮询...");
         if (typeof mLoopRender === 'function') mLoopRender();
         
-        // 开启 1s 轮询保持消息实时更新
         window.mMsgLoopTimer = setInterval(() => {
             if (typeof mLoopRender === 'function') mLoopRender();
         }, 1500);
 
     } else if (index === 1) {
-        // ================= 通讯录页 (Index 1) =================
-        console.log("进入手机端通讯录，触发列表渲染...");
-        
-        // 💡 请检查你代码中负责渲染联系人列表的函数名：
-        // 常见名字如 renderContactList(), mRenderContacts(), renderContacts()
+        // ================= 通讯录页 =================
+        console.log("进入通讯录页...");
         if (typeof renderContactList === 'function') {
             renderContactList(); 
         } else if (typeof mLoopRender === 'function') {
-            // 如果你的通讯录渲染也写在 mLoopRender 里面，就调用它
             mLoopRender(); 
-        } else {
-            console.warn("未找到通讯录渲染函数，请确认函数名");
         }
 
     } else if (index === 2) {
-        // ================= 设置页 (Index 2) =================
-        console.log("进入手机端设置页，正在渲染菜单...");
+        // ================= 群聊页 (新增逻辑) =================
+        console.log("进入群聊页，触发列表加载...");
+        // 调用我们之前定义的那个渲染函数
+        if (typeof mRenderGroupList === 'function') {
+            mRenderGroupList(); 
+        } else {
+            console.warn("未找到群聊渲染函数 mRenderGroupList，请检查是否已定义");
+        }
+
+    } else if (index === 3) {
+        // ================= 配置页 (原索引2的功能) =================
+        console.log("进入配置页...");
         if (typeof renderSettingsPage === 'function') {
             renderSettingsPage();
         }
+    }
+
+}
+/**
+ * 切换移动端视图的工具函数
+ * @param {string} viewName - 视图名称，例如 'chat'
+ */
+function mSetView(viewName) {
+    console.log("正在切换视图至:", viewName);
+
+    // 1. 获取所有页面容器 (参考你 mSwitchTab 中的定义)
+    const pageMap = {
+        'chat': document.getElementById("m-page-msg"),
+        'contact': document.getElementById("m-page-contact"),
+        'group': document.getElementById("m-page-group"),
+        'settings': document.getElementById("m-page-settings")
+    };
+
+    // 2. 隐藏所有页面
+    Object.values(pageMap).forEach(p => {
+        if (p) p.classList.remove("active");
+    });
+
+    // 3. 显示目标页面
+    const targetPage = pageMap[viewName];
+    if (targetPage) {
+        targetPage.classList.add("active");
+        
+        // 4. (可选) 同步底部 Tab 的高亮状态
+        // 如果你需要切换视图时，底部 Tab 也自动选中，可以加上这部分逻辑
+        const tabbar = document.getElementById('m-tabbar');
+        if (tabbar) {
+            const tabs = tabbar.querySelectorAll('.m-tab');
+            tabs.forEach(t => t.classList.remove("active"));
+            if (viewName === 'chat') tabs[0]?.classList.add('active');
+            if (viewName === 'group') tabs[2]?.classList.add('active');
+        }
+    } else {
+        console.warn("未找到对应的页面容器:", viewName);
     }
 }
 
@@ -302,7 +291,7 @@ function mRenderContacts() {
         const name = u.nickname || u.username;
         const char = name.substring(0,1).toUpperCase();
         return `
-            <div class="m-chat-item" onclick="mOpenChat('${u.id}', '${name}')">
+            <div class="m-chat-item" onclick="mOpenPrivateChat('${u.id}', '${name}')">
                 <div class="m-avatar">${char}</div>
                 <div class="flex-1 overflow-hidden">
                     <div class="font-medium text-[16px] text-[#1a1a1a]">${name}</div>
@@ -313,24 +302,7 @@ function mRenderContacts() {
     }).join('');
 }
 
-// 渲染聊天记录列表 (聊天首页)
 
-
-
-// ============== 聊天主视窗 ==============
-function mOpenChat(uid, name) {
-    mActiveTargetId = parseInt(uid);
-    document.getElementById('m-chat-title').innerText = name;
-    
-    // 打开面板
-    document.getElementById('m-chat-window').classList.add('show');
-    
-    // 如果是新联系人，初始化沙箱槽位
-    if (!chatHistory[loggedInUser.id]) chatHistory[loggedInUser.id] = {};
-    if (!chatHistory[loggedInUser.id][uid]) chatHistory[loggedInUser.id][uid] = [];
-    
-    mRenderChatHistory();
-}
 
 function mCloseChat() {
     document.getElementById('m-chat-window').classList.remove('show');
@@ -339,68 +311,7 @@ function mCloseChat() {
 }
 
 
-// ==========================================
-// 重新补充：渲染手机端聊天气泡历史的核心函数
-// ==========================================
-function mRenderChatHistory() {
-    const container = document.getElementById('m-chat-history');
-    if (!container) return;
-    
-    // 【判断是否在底部，防止刷新乱跳】
-    const isAtBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 50;
-    
-    container.innerHTML = ''; // 清空原有内容
-    
-    if (!loggedInUser || !mActiveTargetId) return;
 
-    const myHistory = chatHistory[loggedInUser.id] || {};
-    const msgs = myHistory[mActiveTargetId] || [];
-    
-    msgs.forEach(msg => {
-        const item = document.createElement('div');
-        const isMe = parseInt(msg.sender_id) === parseInt(loggedInUser.id);
-        const name = isMe ? "" : getUserNicknameById(msg.sender_id);
-        const char = isMe ? (loggedInUser.nickname || loggedInUser.username).charAt(0).toUpperCase() : name.charAt(0).toUpperCase();
-        const wrapClass = isMe ? "m-bubble-wrap me" : "m-bubble-wrap them";
-        const avatarColor = isMe ? "bg-gray-600" : "bg-[#1296db]";
-        
-        item.className = wrapClass;
-        item.innerHTML = `
-            <div class="w-10 h-10 rounded shadow-sm text-white flex items-center justify-center font-bold flex-shrink-0 ${avatarColor}">
-                ${char}
-            </div>
-            <div class="m-bubble"></div>
-        `;
-        
-        const bubbleEl = item.querySelector('.m-bubble');
-        
-        // 文件解析与下载绑定
-        if (msg.msg_type === 'file' && msg.file_info) {
-            bubbleEl.innerHTML = ` 📎 请接收加密文件：<a href="javascript:void(0);" class="text-blue-600 underline font-bold break-all m-file-chat-link"></a> `;
-            const linkEl = bubbleEl.querySelector('.m-file-chat-link');
-            linkEl.textContent = msg.file_info.originName; 
-            
-            linkEl.addEventListener('click', (e) => {
-                e.preventDefault();
-                if (typeof downloadAndDecryptChunks === 'function') {
-                    downloadAndDecryptChunks(
-                        msg.file_info.dirId, msg.file_info.originName,
-                        msg.file_info.totalChunks, msg.file_info.encryptedAesKey,
-                        msg.file_info.iv, msg.file_info.messageId
-                    );
-                }
-            });
-        } else {
-            // 普通文本
-            bubbleEl.textContent = msg.text;
-        }
-        container.appendChild(item);
-    });
-    
-    if (isAtBottom || container.children.length <= 1) {
-        container.scrollTop = container.scrollHeight;
-    }
-}
 
 // 渲染气泡（支持文件通知超链接与安全下载解密）
 function mRenderChatList() {
@@ -425,7 +336,7 @@ function mRenderChatList() {
             <div class="m-chat-item" 
                  data-uid="${u.id}" 
                  data-name="${name}"
-                 onclick="mOpenChat('${u.id}', '${name}')"
+                 onclick="mOpenPrivateChat('${u.id}', '${name}')"
                  ontouchstart="mHandleTouchStart(event, this)"
                  ontouchmove="mHandleTouchMove(event)"
                  ontouchend="mHandleTouchEnd(event, this)">
@@ -441,28 +352,7 @@ function mRenderChatList() {
     }).join('');
 }
 // 移动端发送加密消息
-async function mSendMsg() {
-    const inputEl = document.getElementById('m-msg-input');
-    const text = inputEl.value.trim();
-    if (!text || !mActiveTargetId) return;
 
-    // 依然利用底层引擎 ximi.js 的加密通道进行静默发送
-    // 将焦点和参数代理给 ximi.js 对应的输入框
-    document.getElementById('receiverInput').value = mActiveTargetId;
-    document.getElementById('msgText').value = text;
-    
-    if(typeof sendEncryptedText === 'function') {
-        inputEl.value = "加密处理中...";
-        inputEl.disabled = true;
-        
-        await sendEncryptedText();
-        
-        inputEl.value = "";
-        inputEl.disabled = false;
-        mRenderChatHistory();
-        inputEl.focus();
-    }
-}
 
 // 手机端手动收取控制
 function mSyncNow() {
@@ -596,7 +486,7 @@ function renderSettingsPage() {
                  </div>
                  
                  <div class="m-chat-item text-gray-700">
-                   <span class="flex items-center gap-2 leading-none"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="tag" aria-hidden="true" class="lucide lucide-tag w-4 h-4 text-gray-500"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"></path><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"></circle></svg> 版本: V1.11</span>
+                   <span class="flex items-center gap-2 leading-none"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="tag" aria-hidden="true" class="lucide lucide-tag w-4 h-4 text-gray-500"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"></path><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"></circle></svg> 版本: V1.20</span>
                  </div>
 
                  <div class="m-chat-item text-blue-500" style="cursor:pointer; text-overflow: ellipsis;" onclick="window.open('https://github.com/xm-nas/ximi-im','_blank')">
@@ -1209,6 +1099,530 @@ function mOpenAdminPage() {
     }
 }
 //===========================================
+async function mRenderGroupList() {
+    const listContainer = document.getElementById('m-group-list');
+    if (!listContainer) {
+        console.error("未找到 id='m-group-list' 的容器");
+        return;
+    }
+
+    listContainer.innerHTML = '<div class="text-center text-xs text-gray-400 py-8">正在加载群聊...</div>';
+
+    try {
+        const userId = loggedInUser ? loggedInUser.id : null;
+        if (!userId) return;
+
+        const res = await fetch(`api.php?action=list_groups&user_id=${userId}`);
+        const json = await res.json();
+        const groups = json.data || [];
+
+        if (groups.length === 0) {
+            listContainer.innerHTML = '<div class="text-center text-xs text-gray-400 py-8">暂无加入的群聊</div>';
+            return;
+        }
+
+        // 渲染列表：点击触发 mJoinGroup
+        // 使用单引号包裹字符串，并转义名称中的单引号，防止语法报错
+        listContainer.innerHTML = groups.map(g => `
+            <div class="m-chat-item p-3 border-b border-gray-100 flex items-center bg-white cursor-pointer" 
+                 onclick="mOpenGroupChat('${g.id}', '${String(g.name).replace(/'/g, "\\'")}')">
+                <div class="w-10 h-10 bg-green-500 text-white rounded flex items-center justify-center mr-3 font-bold">群</div>
+                <div>
+                    <div class="text-sm font-bold text-gray-800">${g.name}</div>
+                    <div class="text-[10px] text-gray-400">ID: ${g.id}</div>
+                </div>
+            </div>
+        `).join('');
+
+    } catch (err) {
+        console.error("加载移动端群聊列表失败:", err);
+        listContainer.innerHTML = '<div class="text-center text-xs text-red-400 py-8">加载失败，请重试</div>';
+    }
+}
+
+
+
+/* ==============================================================
+ * 底层视图渲染器劫持 (Observer)
+ * ============================================================== */
+if (typeof window.renderActiveContainer !== 'undefined') {
+    const _originalRender = window.renderActiveContainer;
+    window.renderActiveContainer = function() {
+        // 让 PC 端保持正常渲染，不破坏底层
+        _originalRender(); 
+        
+        // 探针：如果发现设备处于移动端视口，且聊天窗正处于激活覆盖状态，强制触发挥发性重绘
+        if (window.innerWidth <= 1080 && currentActiveTargetId) {
+            const mChatWindow = document.getElementById('m-chat-window');
+            if (mChatWindow && mChatWindow.classList.contains('show')) {
+                mRenderChatHistory();
+            }
+        }
+    };
+}
+
+// ==========================================
+// 🔴 私聊专属物理隔离模块
+// ==========================================
+// let mPrivateSyncTimer = null;
+
+// function mOpenPrivateChat(uid, name) {
+//     currentChatType = 'private';
+//     currentActiveTargetId = parseInt(uid);
+    
+//     // 唤醒私聊容器
+//     const chatWin = document.getElementById('m-chat-window');
+//     const titleEl = document.getElementById('m-chat-title');
+//     if (titleEl) titleEl.innerText = name;
+//     if (chatWin) chatWin.classList.add('show');
+    
+//     // 绑定私聊发送事件
+//     const sendBtn = document.querySelector('#m-chat-window .m-send-btn');
+//     if (sendBtn) sendBtn.onclick = mSendPrivateMsg;
+
+//     mRenderPrivateHistory();
+    
+//     // 开启私聊专属 UI 刷新定时器 (底层 ximi.js 已在自动 pull，这里只负责渲染)
+//     if (mPrivateSyncTimer) clearInterval(mPrivateSyncTimer);
+//     mPrivateSyncTimer = setInterval(() => {
+//         if (currentChatType === 'private' && chatWin.classList.contains('show')) {
+//             mRenderPrivateHistory();
+//         }
+//     }, 1500);
+// }
+
+// function mClosePrivateChat() {
+//     document.getElementById('m-chat-window').classList.remove('show');
+//     currentActiveTargetId = null;
+//     if (mPrivateSyncTimer) clearInterval(mPrivateSyncTimer);
+// }
+
+// async function mSendPrivateMsg() {
+//     const inputEl = document.getElementById('m-msg-input');
+//     const text = inputEl.value.trim();
+//     if (!text || !currentActiveTargetId) return;
+
+//     inputEl.value = "发送中...";
+//     inputEl.disabled = true;
+
+//     // 1. 强制声明为私聊
+//     currentChatType = 'private';
+//     // 2. 将数据塞给底层的影子节点
+//     document.getElementById('msgText').value = text;
+//     document.getElementById('receiverInput').value = currentActiveTargetId;
+
+//     // 3. 呼叫底层 ximi.js 的统一发送引擎
+//     if (typeof sendEncryptedText === 'function') {
+//         await sendEncryptedText();
+//     }
+
+//     inputEl.value = "";
+//     inputEl.disabled = false;
+//     mRenderPrivateHistory();
+//     inputEl.focus();
+// }
+
+// function mRenderPrivateHistory() {
+//     const container = document.getElementById('m-chat-history');
+//     if (!container || currentChatType !== 'private') return;
+    
+//     const isAtBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 50;
+//     const myHistory = chatHistory[loggedInUser.id] || {};
+//     const msgs = myHistory[currentActiveTargetId] || [];
+    
+//     let html = '';
+//     msgs.forEach(msg => {
+//         const isMe = parseInt(msg.sender_id) === parseInt(loggedInUser.id);
+//         const senderName = isMe ? "" : (typeof getUserNicknameById === 'function' ? getUserNicknameById(msg.sender_id) : "未知");
+//         const char = isMe ? (loggedInUser.nickname || loggedInUser.username).charAt(0).toUpperCase() : senderName.charAt(0).toUpperCase();
+//         const wrapClass = isMe ? "m-bubble-wrap me" : "m-bubble-wrap them";
+//         const avatarColor = isMe ? "bg-gray-600" : "bg-[#1296db]";
+        
+//         let content = msg.text || msg.decrypted_text || msg.content || "[空]";
+//         if (msg.msg_type === 'file' && msg.file_info) {
+//             content = `📎 收到文件：<a href="#" onclick="downloadAndDecryptChunks('${msg.file_info.dirId}', '${msg.file_info.originName}', ${msg.file_info.totalChunks}, '${msg.file_info.encryptedAesKey}', '${msg.file_info.iv}', ${msg.file_info.messageId}); return false;" class="text-blue-600 underline">${msg.file_info.originName}</a>`;
+//         }
+
+//         html += `
+//             <div class="${wrapClass}">
+//                 <div class="w-10 h-10 rounded shadow-sm text-white flex items-center justify-center font-bold flex-shrink-0 ${avatarColor}">${char}</div>
+//                 <div class="flex flex-col ${isMe ? 'items-end' : 'items-start'} max-w-[80%] w-fit">
+//                     <div class="m-bubble w-fit break-words">${content}</div>
+//                 </div>
+//             </div>
+//         `;
+//     });
+//     container.innerHTML = html;
+//     if (isAtBottom || container.children.length <= 1) container.scrollTop = container.scrollHeight;
+// }
+// ==========================================
+// 🔴 私聊专属隔离模块（完全独立）
+// ==========================================
+let mPrivateTimer = null;
+
+function mOpenPrivateChat(uid, name) {
+    currentChatType = 'private';
+    currentActiveTargetId = parseInt(uid);
+    mActiveTargetId = parseInt(uid);
+    
+    // 唤醒私聊的原生容器 (index.html 中自带的那个)
+    const chatWin = document.getElementById('m-chat-window');
+    const titleEl = document.getElementById('m-chat-title');
+    if (titleEl) titleEl.innerText = name;
+    if (chatWin) chatWin.classList.add('show');
+    
+    // 立即重绘一次私聊历史
+    mRenderPrivateHistory();
+    
+    // 启动私聊独立定时器（仅刷新私聊 UI）
+    if (mPrivateTimer) clearInterval(mPrivateTimer);
+    mPrivateTimer = setInterval(() => {
+        if (currentChatType === 'private' && chatWin && chatWin.classList.contains('show')) {
+            mRenderPrivateHistory();
+        }
+    }, 1500);
+}
+// 私聊独立关闭函数
+function mClosePrivateChat() {
+    const chatWin = document.getElementById('m-chat-window');
+    if (chatWin) chatWin.classList.remove('show');
+    
+    // 释放锁与定时器
+    currentActiveTargetId = null;
+    mActiveTargetId = null;
+    if (mPrivateTimer) clearInterval(mPrivateTimer);
+    
+    // 退出聊天窗后，触发一次外部列表刷新，更新最后一条消息摘要
+    if (typeof mLoopRender === 'function') mLoopRender();
+}
+// 私聊独立发送函数
+async function mSendPrivateMsg() {
+    const inputEl = document.getElementById('m-msg-input'); // 私聊输入框
+    if (!inputEl) return;
+    const text = inputEl.value.trim();
+    if (!text || !currentActiveTargetId || currentChatType !== 'private') return;
+
+    inputEl.value = "发送中...";
+    inputEl.disabled = true;
+
+    // 塞给 PC 端影子节点以配合 ximi.js 的 sendEncryptedText
+    const pcMsgText = document.getElementById('msgText');
+    const pcReceiver = document.getElementById('receiverInput');
+    if (pcMsgText) pcMsgText.value = text;
+    if (pcReceiver) pcReceiver.value = currentActiveTargetId;
+
+    if (typeof sendEncryptedText === 'function') {
+        await sendEncryptedText();
+    }
+
+    inputEl.value = "";
+    inputEl.disabled = false;
+    mRenderPrivateHistory();
+    inputEl.focus();
+}
+
+// 私聊独立渲染函数 (加入强制样式修正，解除 Tailwind 束缚)
+function mRenderPrivateHistory() {
+    const container = document.getElementById('m-chat-history');
+    if (!container || currentChatType !== 'private') return;
+    
+    const isAtBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 50;
+    const myHistory = chatHistory[loggedInUser.id] || {};
+    const msgs = myHistory[currentActiveTargetId] || [];
+    
+    let html = '';
+    msgs.forEach(msg => {
+        const isMe = parseInt(msg.sender_id) === parseInt(loggedInUser.id);
+        const char = isMe ? (loggedInUser.nickname || loggedInUser.username).charAt(0).toUpperCase() : "U";
+        const wrapClass = isMe ? "m-bubble-wrap me" : "m-bubble-wrap them";
+        const avatarColor = isMe ? "bg-gray-600" : "bg-[#1296db]";
+        let content = msg.text || msg.decrypted_text || msg.content || "";
+
+        // 注意：这里去掉了外层的 w-fit 和 max-w，直接在 HTML Style 上强制接管布局display: flex; flex-direction: column; align-items: flex-end; max-w: 70%; width: max-content;
+        html += `
+            <div class="${wrapClass}" style="display: flex; margin: 12px 10px; width: calc(100% - 20px); flex-direction: ${isMe ? 'row-reverse' : 'row'};">
+                <div class="w-10 h-10 rounded shadow-sm text-white flex items-center justify-center font-bold flex-shrink-0 ${avatarColor}">${char}</div>
+                <div style="display: flex; flex-direction: column; align-items: ${isMe ? 'flex-end' : 'flex-start'}; max-w: 70%;     width: 100%;">
+                    <div class="m-bubble" style="background-color: ${isMe ? '#95ec69' : '#fff'}; color: #000; padding: 10px 14px; border-radius: 8px; font-size: 15px; line-height: 1.4; word-break: break-word; overflow-wrap: break-word; margin-${isMe ? 'right' : 'left'}: 10px; position: relative; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">${content}</div>
+                </div>
+            </div>
+        `;
+    });
+    container.innerHTML = html;
+    if (isAtBottom || container.children.length <= 1) container.scrollTop = container.scrollHeight;
+}
+
+
+// ==========================================
+// 🔵 群聊专属物理隔离模块 (动态创建独立 UI 容器)
+// ==========================================
+// let mGroupSyncTimer = null;
+
+// function mOpenGroupChat(groupId, groupName) {
+//     currentChatType = 'group';
+//     currentActiveTargetId = parseInt(groupId);
+
+//     // 1. 获取或创建群聊专属的物理容器
+//     let groupWin = document.getElementById('m-group-chat-window');
+//     if (!groupWin) {
+//         groupWin = document.createElement('div');
+//         groupWin.id = 'm-group-chat-window';
+//         groupWin.className = 'm-chat-window-overlay show';
+//         groupWin.style.zIndex = '100'; // 确保盖在最上面
+//         document.body.appendChild(groupWin);
+//     } else {
+//         groupWin.classList.add('show');
+//     }
+
+//     // 2. 注入完全独立的 ID 结构
+//     groupWin.innerHTML = `
+//         <div class="m-chat-header">
+//             <div class="m-chat-back" onclick="mCloseGroupChat()" style="padding: 10px; cursor: pointer;">
+//                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"></polyline></svg>返回
+//             </div>
+//             <div class="flex-1 text-center font-bold mr-6 truncate" style="font-size: 18px;font-weight: 400;color: #4a5563;">${groupName}</div>
+//             <div style="padding: 20px;"></div>
+//         </div>
+//         <div class="m-msg-area" id="m-group-chat-history">
+//             <div class="text-center text-gray-400 py-10 text-sm">正在底层安全解密群数据...</div>
+//         </div>
+//         <div class="m-input-area">
+//             <textarea id="m-group-msg-input" class="m-input-box" rows="1" placeholder="发送群聊加密报文..."></textarea>
+//             <button onclick="mSendGroupMsg()" class="m-send-btn">发送</button>
+//         </div>
+//     `;
+
+//     // 3. 立即从云端拉取群消息并解密渲染
+//     if (typeof pullGroupMessages === 'function') {
+//         pullGroupMessages(currentActiveTargetId).then(() => mRenderGroupHistory());
+//     }
+
+//     // 4. 开启群聊专属的底层拉取定时器 (每3秒强制去云端对账一次)
+//     if (mGroupSyncTimer) clearInterval(mGroupSyncTimer);
+//     mGroupSyncTimer = setInterval(() => {
+//         if (currentChatType === 'group' && currentActiveTargetId) {
+//             if (typeof pullGroupMessages === 'function') {
+//                 pullGroupMessages(currentActiveTargetId).then(() => mRenderGroupHistory());
+//             }
+//         }
+//     }, 3000);
+// }
+
+// function mCloseGroupChat() {
+//     const groupWin = document.getElementById('m-group-chat-window');
+//     if (groupWin) groupWin.classList.remove('show');
+//     currentActiveTargetId = null;
+//     if (mGroupSyncTimer) clearInterval(mGroupSyncTimer);
+// }
+
+// async function mSendGroupMsg() {
+//     const inputEl = document.getElementById('m-group-msg-input');
+//     const text = inputEl.value.trim();
+//     if (!text || !currentActiveTargetId) return;
+
+//     inputEl.value = "群密文外发中...";
+//     inputEl.disabled = true;
+
+//     // 1. 强制声明为群聊
+//     currentChatType = 'group';
+//     // 2. 将数据塞给底层的影子节点
+//     document.getElementById('msgText').value = text;
+    
+//     // 3. 呼叫底层 ximi.js 的统一发送引擎 (ximi.js 会自动按 currentChatType 使用 AES 通道)
+//     if (typeof sendEncryptedText === 'function') {
+//         await sendEncryptedText();
+//     }
+
+//     inputEl.value = "";
+//     inputEl.disabled = false;
+    
+//     // 发送完立即强制云端拉取刷新
+//     if (typeof pullGroupMessages === 'function') {
+//         await pullGroupMessages(currentActiveTargetId);
+//     }
+//     mRenderGroupHistory();
+//     inputEl.focus();
+// }
+
+// function mRenderGroupHistory() {
+//     const container = document.getElementById('m-group-chat-history');
+//     if (!container || currentChatType !== 'group') return;
+    
+//     const isAtBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 50;
+//     const myGroupHistory = groupChatHistory[loggedInUser.id] || {};
+//     const msgs = myGroupHistory[currentActiveTargetId] || [];
+    
+//     let html = '';
+//     msgs.forEach(msg => {
+//         const isMe = parseInt(msg.sender_id) === parseInt(loggedInUser.id);
+//         const senderName = isMe ? "" : (typeof getUserNicknameById === 'function' ? getUserNicknameById(msg.sender_id) : "未知");
+//         const char = isMe ? (loggedInUser.nickname || loggedInUser.username).charAt(0).toUpperCase() : senderName.charAt(0).toUpperCase();
+//         const wrapClass = isMe ? "m-bubble-wrap me" : "m-bubble-wrap them";
+//         const avatarColor = isMe ? "bg-gray-600" : "bg-[#1296db]";
+        
+//         // 别人发言时显示名字小尾巴
+//         const groupNameHtml = !isMe ? `<div class="m-msg-nickname" style="font-size:10px; color:#888; margin-bottom:2px; margin-left:4px;">${senderName}</div>` : '';
+        
+//         html += `
+//             <div class="${wrapClass}">
+//                 <div class="w-10 h-10 rounded shadow-sm text-white flex items-center justify-center font-bold flex-shrink-0 ${avatarColor}">${char}</div>
+//                 <div class="flex flex-col ${isMe ? 'items-end' : 'items-start'} max-w-[80%] w-fit">
+//                     ${groupNameHtml}
+//                     <div class="m-bubble w-fit break-words">${msg.text || msg.decrypted_text || "[空]"}</div>
+//                 </div>
+//             </div>
+//         `;
+//     });
+//     container.innerHTML = html;
+//     if (isAtBottom || container.children.length <= 1) container.scrollTop = container.scrollHeight;
+// }
+
+// ==========================================
+// 🔵 群聊专属隔离模块（完全独立，节点、ID、定时器全部隔离）
+// ==========================================
+let mGroupTimer = null;
+
+function mOpenGroupChat(groupId, groupName) {
+    currentChatType = 'group';
+    currentActiveTargetId = parseInt(groupId);
+    mActiveTargetId = parseInt(groupId);
+
+    let groupWin = document.getElementById('m-group-chat-window');
+    if (!groupWin) {
+        groupWin = document.createElement('div');
+        groupWin.id = 'm-group-chat-window';
+        
+        // 🚨 核心修复：只赋予 class 名和层级，绝对不能在这里写内联的 transform，否则会卡死在屏幕外！
+        groupWin.className = 'm-chat-window-overlay';
+        groupWin.style.zIndex = '500'; 
+        
+        document.body.appendChild(groupWin);
+    }
+    
+    // 利用一个小延迟确保浏览器渲染队列更新，这样划入动画才会生效
+    setTimeout(() => {
+        groupWin.classList.add('show');
+    }, 10);
+
+    // 注入群聊专属的 UI 模板
+    groupWin.innerHTML = `
+        <div class="m-chat-header" style="display: flex; align-items: center; height: 60px; border-bottom: 1px solid #e5e5e5; background: #f5f5f5;">
+            <div class="m-chat-back" onclick="mCloseGroupChat()" style="padding: 15px; cursor: pointer; display: flex; align-items: center; gap: 4px; font-size: 16px;">
+                返回
+            </div>
+            <div class="flex-1 text-center font-bold mr-6 truncate" style="font-size: 18px; color: #4a5563;">${groupName}</div>
+            
+            <div style="padding: 20px; cursor: pointer;"  >
+<svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+  <path d="M8 3a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zm0 5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zm0 5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z"/>
+</svg>
+    </div>
+
+        </div>
+        <div class="m-msg-area" id="m-group-chat-history" style="flex: 1; overflow-y: auto; padding: 1px; padding-bottom: 80px; display: flex; flex-direction: column;">
+            <div class="text-center text-gray-400 py-10 text-sm">安全对账并解密群数据...</div>
+        </div>
+        <div class="m-input-area" style="position: fixed; bottom: 0; left: 0; width: 100%; background: #f7f7f7; border-top: 1px solid #e5e5e5; padding: 8px 12px; display: flex; align-items: flex-end; gap: 10px; z-index: 600;">
+            <button onclick="mTriggerFileSelect()" class="m-file-btn" type="button" style="margin-bottom: 8px; font-size: 18px; background: none; border: none; cursor: pointer;">📎</button>
+            <textarea id="m-group-msg-input" class="m-input-box" rows="1" placeholder="发送群聊安全密文..." style="flex: 1; background: #fff; border-radius: 4px; min-height: 36px; max-height: 100px; padding: 8px; font-size: 15px; outline: none; border: 1px solid #e5e5e5; resize: none;"></textarea>
+            <button onclick="mSendGroupMsg()" class="m-send-btn" style="background: #07c160; color: white; border: none; border-radius: 4px; padding: 0 16px; height: 36px; font-size: 14px; font-weight: 500;">发送</button>
+        </div>
+    `;
+
+    // 立即从云端拉取群消息并解密渲染
+    if (typeof pullGroupMessages === 'function') {
+        pullGroupMessages(currentActiveTargetId).then(() => mRenderGroupHistory());
+    }
+
+    // 开启群聊专属的定时器
+    if (mGroupTimer) clearInterval(mGroupTimer);
+    mGroupTimer = setInterval(() => {
+        if (currentChatType === 'group' && currentActiveTargetId && groupWin.classList.contains('show')) {
+            if (typeof pullGroupMessages === 'function') {
+                pullGroupMessages(currentActiveTargetId).then(() => mRenderGroupHistory());
+            }
+        }
+    }, 2000);
+}
+
+function mCloseGroupChat() {
+    const groupWin = document.getElementById('m-group-chat-window');
+    if (groupWin) groupWin.classList.remove('show');
+    currentActiveTargetId = null;
+    if (mGroupTimer) clearInterval(mGroupTimer);
+}
+
+// 群聊独立发送函数
+async function mSendGroupMsg() {
+    const inputEl = document.getElementById('m-group-msg-input'); // 锁定群聊专属输入框
+    if (!inputEl) return;
+    const text = inputEl.value.trim();
+    if (!text || !currentActiveTargetId || currentChatType !== 'group') return;
+
+    inputEl.value = "群密文投递中...";
+    inputEl.disabled = true;
+
+    // 塞给 PC 端群聊影子节点
+    const pcMsgText = document.getElementById('msgText');
+    if (pcMsgText) pcMsgText.value = text;
+
+    // 调用底层 ximi.js 统一发送引擎发送群消息
+    if (typeof sendEncryptedText === 'function') {
+        await sendEncryptedText();
+    }
+
+    inputEl.value = "";
+    inputEl.disabled = false;
+    
+    // 瞬间强制对账拉取
+    if (typeof pullGroupMessages === 'function') {
+        await pullGroupMessages(currentActiveTargetId);
+    }
+    mRenderGroupHistory();
+    inputEl.focus();
+}
+
+// 群聊独立渲染函数 (补齐文件解析功能)
+function mRenderGroupHistory() {
+    const container = document.getElementById('m-group-chat-history');
+    if (!container || currentChatType !== 'group') return;
+    
+    const isAtBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 50;
+    const myGroupHistory = groupChatHistory[loggedInUser.id] || {};
+    const msgs = myGroupHistory[currentActiveTargetId] || [];
+    
+    let html = '';
+    msgs.forEach(msg => {
+        const isMe = parseInt(msg.sender_id) === parseInt(loggedInUser.id);
+        const senderName = isMe ? "" : (typeof getUserNicknameById === 'function' ? getUserNicknameById(msg.sender_id) : "未知用户");
+        const char = isMe ? (loggedInUser.nickname || loggedInUser.username).charAt(0).toUpperCase() : senderName.charAt(0).toUpperCase();
+        const wrapClass = isMe ? "m-bubble-wrap me" : "m-bubble-wrap them";
+        const avatarColor = isMe ? "bg-gray-600" : "bg-[#1296db]";
+        
+        let content = msg.text || msg.decrypted_text || "";
+        
+        // 【修复遗漏】：补回文件气泡的解析和下载超链接
+        if (msg.msg_type === 'file' && msg.file_info) {
+            content = `📎 收到文件：<a href="#" onclick="downloadAndDecryptChunks('${msg.file_info.dirId}', '${msg.file_info.originName}', ${msg.file_info.totalChunks}, '${msg.file_info.encryptedAesKey}', '${msg.file_info.iv}', ${msg.file_info.messageId}); return false;" style="color: #2563eb; text-decoration: underline; word-break: break-all;">${msg.file_info.originName}</a>`;
+        }
+
+        const groupNameHtml = !isMe ? `<div style="font-size:11px; color:#999; margin-bottom:2px; margin-left:12px;">${senderName}</div>` : '';
+
+        html += `
+            <div class="${wrapClass}" style="display: flex; margin: 12px 10px; width: calc(100% - 20px); flex-direction: ${isMe ? 'row-reverse' : 'row'};">
+                <div class="w-10 h-10 rounded shadow-sm text-white flex items-center justify-center font-bold flex-shrink-0 ${avatarColor}">${char}</div>
+                <div style="display: flex; flex-direction: column; align-items: ${isMe ? 'flex-end' : 'flex-start'}; max-w: 70%;     width: 100%;">
+                    ${groupNameHtml}
+                    <div class="m-bubble" style="background-color: ${isMe ? '#95ec69' : '#fff'}; color: #000; padding: 10px 14px; border-radius: 8px; font-size: 15px; line-height: 1.4; word-break: break-word; overflow-wrap: break-word; margin-${isMe ? 'right' : 'left'}: 10px; position: relative; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">${content}</div>
+                </div>
+            </div>
+        `;
+    });
+    container.innerHTML = html;
+    if (isAtBottom || container.children.length <= 1) container.scrollTop = container.scrollHeight;
+}
+
+
 
 // 每 3 秒检测一次
 setInterval(checkLatency, 3000);
