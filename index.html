@@ -28,7 +28,7 @@
         .menu-items { display: flex; flex-direction: column; gap: 16px; align-items: center; width: 100%; flex: 1; padding-top: 10px; }
         .menu-icon { font-size: 20px; cursor: pointer; opacity: 0.6; transition: opacity 0.2s, background 0.2s; width: 42px; height: 42px; display: flex; align-items: center; justify-content: center; border-radius: 6px; }
         .menu-icon:hover, .menu-icon.active { opacity: 1; background: rgba(255,255,255,0.1); }
-        .menu-icon.active { color: #3b82f6; background: #86c8a7; }
+        .menu-icon.active { color: #6d7684; background: #86c8a7; }
         .chat-list-panel { width: 260px; background: #e6e6e6; border-right: 1px solid #dcdcdc; display: flex; flex-direction: column; }
         .search-bar-container { height: 60px; padding: 20px 12px 10px 12px; display: flex; gap: 8px; align-items: center; cursor: move; }
         .user-item { display: flex; align-items: center; gap: 10px; padding: 12px 12px; cursor: pointer; transition: background-color 0.2s; border-bottom: 1px solid rgba(0,0,0,0.03); }
@@ -44,6 +44,11 @@
         .btn-premium-pull:hover { background: #e5e7eb; color: #1f2937; border-color: #9ca3af; }
         .btn-premium-send { background: #1296db; color: white; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); box-shadow: 0 2px 6px rgba(18, 150, 219, 0.25); }
         .btn-premium-send:hover { background: #1085c4; box-shadow: 0 4px 12px rgba(18, 150, 219, 0.4); } .btn-premium-send:active { transform: scale(0.97); }
+
+.text-gray-400 {
+    --tw-text-opacity: 1;
+    color: rgb(86 92 100);
+}
 
   @media (max-width:1080px){#pc-wrapper{display:none!important}
 #m-wrapper{display:block!important}
@@ -264,9 +269,14 @@ label.ll2:hover {
                     </div>
                     <div class="w-9 h-9 bg-gray-600 text-white flex items-center justify-center font-bold rounded-lg mb-4 text-sm shadow border border-gray-700" id="avatarBox">🔒</div>
                     <div class="menu-items">
-                        <div class="menu-icon active" id="menuBtnChat" onclick="showChatList()" title="聊天记录">💬</div>
-<div class="menu-icon text-gray-400" id="menuBtnContact" onclick="showContactList()" title="通讯录">👤</div>
-<div class="menu-icon text-gray-400" id="menuBtnGroup" onclick="showGroupList()" title="群聊房间">🧑‍🤝‍🧑</div>
+
+                        <div class="menu-icon active" id="menuBtnChat" onclick="showChatList()" style="color: #525757; title="聊天记录"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="message-circle" aria-hidden="true" class="lucide lucide-message-circle"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"></path></svg>
+</div>
+<div class="menu-icon text-gray-400" id="menuBtnContact" onclick="showContactList()" style="color: #525757; title="通讯录"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="user" aria-hidden="true" class="lucide lucide-user"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+</div>
+<div class="menu-icon text-gray-400" id="menuBtnGroup" onclick="showGroupList()" style="color: #525757; title="群聊房间"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="users" aria-hidden="true" class="lucide lucide-users"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><path d="M16 3.128a4 4 0 0 1 0 7.744"></path><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><circle cx="9" cy="7" r="4"></circle></svg>
+</div>
+
 <!-- <div class="menu-icon text-gray-400" id="logToggleBtn" onclick="toggleLogConsole(event)" title="实时调试日志">📜</div> -->
                     </div>
                 </div>
@@ -572,10 +582,14 @@ label.ll2:hover {
 
 
 <div class="m-tabbar" id="m-tabbar">
-     <div class="m-tab" onclick="mSwitchTab(1)"><span class="m-icon">👥</span><span>通讯录</span></div>
-    <div class="m-tab active" onclick="mSwitchTab(0)"><span class="m-icon">💬</span><span>聊天</span></div>
-    <div class="m-tab" onclick="mSwitchTab(2)"><span class="m-icon">🧑‍🤝‍🧑</span><span>群聊</span></div>
-    <div class="m-tab" onclick="mSwitchTab(3)"><span class="m-icon">⚙️</span><span>设置</span></div>
+    <div class="m-tab active" onclick="mSwitchTab(0)"><span class="m-icon"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="message-circle" aria-hidden="true" class="lucide lucide-message-circle"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"></path></svg>
+</span><span>聊天</span></div>
+     <div class="m-tab" onclick="mSwitchTab(1)"><span class="m-icon"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="user" aria-hidden="true" class="lucide lucide-user"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+</span><span>通讯录</span></div>
+    <div class="m-tab" onclick="mSwitchTab(2)"><span class="m-icon"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="users" aria-hidden="true" class="lucide lucide-users"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><path d="M16 3.128a4 4 0 0 1 0 7.744"></path><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><circle cx="9" cy="7" r="4"></circle></svg>
+</span><span>群聊</span></div>
+    <div class="m-tab" onclick="mSwitchTab(3)"><span class="m-icon"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="settings" aria-hidden="true" class="lucide lucide-settings"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"></path><circle cx="12" cy="12" r="3"></circle></svg>
+</span><span>设置</span></div>
 </div>
 
         <div id="m-chat-window" class="m-chat-window-overlay">
