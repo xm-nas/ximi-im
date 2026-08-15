@@ -1010,5 +1010,201 @@ if ($action === 'get_group_messages') {
     exit;
 }
 
+// ========================================================
+// 公告系统 (Announcement System)
+// ========================================================
+
+// ------------------------------------------
+// 获取公告列表 (Get Announcements)
+// ------------------------------------------
+if ($action === 'get_announcements') {
+    $user_id = intval($_GET['user_id'] ?? 0);
+    
+    try {
+        // 获取有效的公告，按优先级和创建时间排序
+        $stmt = $pdo->prepare("
+            SELECT id, title, content, creator_id, status, priority, start_time, end_time, created_at, updated_at
+            FROM announcements
+            WHERE status = 'active'
+            AND (end_time IS NULL OR end_time > CURRENT_TIMESTAMP)
+            ORDER BY priority DESC, created_at DESC
+        ");
+        $stmt->execute();
+        $announcements = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        // 如果用户已登录，获取已读状态
+        $readMap = [];
+        if ($user_id > 0) {
+            $readStmt = $pdo->prepare("
+                SELECT announcement_id FROM announcement_reads WHERE user_id = ?
+            ");
+            $readStmt->execute([$user_id]);
+            foreach ($readStmt->fetchAll(PDO::FETCH_ASSOC) as $read) {
+                $readMap[$read['announcement_id']] = true;
+            }
+        }
+        
+        // 添加已读状态到每条公告
+        foreach ($announcements as &$ann) {
+            $ann['is_read'] = isset($readMap[$ann['id']]) ? 1 : 0;
+        }
+        
+        echo json_encode(['code' => 200, 'data' => $announcements]);
+    } catch (PDOException $e) {
+        echo json_encode(['code' => 500, 'msg' => '获取公告失败: ' . $e->getMessage()]);
+    }
+    exit;
+}
+
+// ------------------------------------------
+// 创建公告 (Create Announcement - Admin Only)
+// ------------------------------------------
+if ($action === 'create_announcement') {
+    $inputData = (strpos($_SERVER['CONTENT_TYPE'] ?? '', 'application/json') !== false) ? $input : $_POST;
+    
+    $creator_id = intval($inputData['creator_id'] ?? 0);
+    $title = trim($inputData['title'] ?? '');
+    $content = trim($inputData['content'] ?? '');
+    $priority = intval($inputData['priority'] ?? 0);
+    $end_time = trim($inputData['end_time'] ?? '');
+    
+    verify_user_auth($pdo, $creator_id);
+    
+    // 权限检查：仅限管理员创建公告（可根据需求调整）
+    // 这里简化为只要用户认证通过就可以创建
+    
+    if (empty($title) || empty($content)) {
+        echo json_encode(['code' => 400, 'msg' => '标题和内容不能为空']);
+        exit;
+    }
+    
+    try {
+        $stmt = $pdo->prepare("
+            INSERT INTO announcements (title, content, creator_id, priority, end_time, status, start_time, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ");
+        
+        $stmt->execute([
+            $title,
+            $content,
+            $creator_id,
+            $priority,
+            empty($end_time) ? null : $end_time
+        ]);
+        
+        $announcement_id = $pdo->lastInsertId();
+        echo json_encode(['code' => 200, 'msg' => '公告创建成功', 'announcement_id' => $announcement_id]);
+    } catch (PDOException $e) {
+        echo json_encode(['code' => 500, 'msg' => '创建公告失败: ' . $e->getMessage()]);
+    }
+    exit;
+}
+
+// ------------------------------------------
+// 更新公告 (Update Announcement - Admin Only)
+// ------------------------------------------
+if ($action === 'update_announcement') {
+    $inputData = (strpos($_SERVER['CONTENT_TYPE'] ?? '', 'application/json') !== false) ? $input : $_POST;
+    
+    $announcement_id = intval($inputData['announcement_id'] ?? 0);
+    $creator_id = intval($inputData['creator_id'] ?? 0);
+    $title = trim($inputData['title'] ?? '');
+    $content = trim($inputData['content'] ?? '');
+    $priority = intval($inputData['priority'] ?? 0);
+    $status = trim($inputData['status'] ?? 'active');
+    $end_time = trim($inputData['end_time'] ?? '');
+    
+    verify_user_auth($pdo, $creator_id);
+    
+    if (!$announcement_id) {
+        echo json_encode(['code' => 400, 'msg' => '缺少公告ID']);
+        exit;
+    }
+    
+    try {
+        $stmt = $pdo->prepare("
+            UPDATE announcements
+            SET title = ?, content = ?, priority = ?, status = ?, end_time = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        ");
+        
+        $stmt->execute([
+            $title,
+            $content,
+            $priority,
+            $status,
+            empty($end_time) ? null : $end_time,
+            $announcement_id
+        ]);
+        
+        echo json_encode(['code' => 200, 'msg' => '公告更新成功']);
+    } catch (PDOException $e) {
+        echo json_encode(['code' => 500, 'msg' => '更新公告失败: ' . $e->getMessage()]);
+    }
+    exit;
+}
+
+// ------------------------------------------
+// 删除公告 (Delete Announcement - Admin Only)
+// ------------------------------------------
+if ($action === 'delete_announcement') {
+    $announcement_id = intval($_GET['announcement_id'] ?? intval($input['announcement_id'] ?? 0));
+    $user_id = intval($_GET['user_id'] ?? intval($input['user_id'] ?? 0));
+    
+    verify_user_auth($pdo, $user_id);
+    
+    if (!$announcement_id) {
+        echo json_encode(['code' => 400, 'msg' => '缺少公告ID']);
+        exit;
+    }
+    
+    try {
+        $pdo->beginTransaction();
+        
+        // 删除公告相关的已读记录
+        $pdo->prepare("DELETE FROM announcement_reads WHERE announcement_id = ?")->execute([$announcement_id]);
+        
+        // 删除公告
+        $pdo->prepare("DELETE FROM announcements WHERE id = ?")->execute([$announcement_id]);
+        
+        $pdo->commit();
+        echo json_encode(['code' => 200, 'msg' => '公告删除成功']);
+    } catch (PDOException $e) {
+        $pdo->rollBack();
+        echo json_encode(['code' => 500, 'msg' => '删除公告失败: ' . $e->getMessage()]);
+    }
+    exit;
+}
+
+// ------------------------------------------
+// 标记公告已读 (Mark Announcement as Read)
+// ------------------------------------------
+if ($action === 'mark_announcement_read') {
+    $inputData = (strpos($_SERVER['CONTENT_TYPE'] ?? '', 'application/json') !== false) ? $input : $_POST;
+    
+    $announcement_id = intval($inputData['announcement_id'] ?? 0);
+    $user_id = intval($inputData['user_id'] ?? 0);
+    
+    verify_user_auth($pdo, $user_id);
+    
+    if (!$announcement_id || !$user_id) {
+        echo json_encode(['code' => 400, 'msg' => '缺少必要参数']);
+        exit;
+    }
+    
+    try {
+        $stmt = $pdo->prepare("
+            INSERT OR IGNORE INTO announcement_reads (announcement_id, user_id, read_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+        ");
+        $stmt->execute([$announcement_id, $user_id]);
+        
+        echo json_encode(['code' => 200, 'msg' => '已标记为已读']);
+    } catch (PDOException $e) {
+        echo json_encode(['code' => 500, 'msg' => '标记失败: ' . $e->getMessage()]);
+    }
+    exit;
+}
+
 // 【这是最后一行，多余的括号已经被彻底删除了】
 echo json_encode(['code' => 404, 'msg' => '无对应接口']);

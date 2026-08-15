@@ -114,7 +114,34 @@ try {
     )");
 
     // =========================
-    // 7. 安全升级：自动补字段（兼容旧版本）
+    // 7. 公告系统表
+    // =========================
+    $pdo->exec("CREATE TABLE IF NOT EXISTS announcements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        creator_id INTEGER NOT NULL,
+        status TEXT DEFAULT 'active',  -- active / inactive
+        priority INTEGER DEFAULT 0,    -- 优先级（越大越靠前）
+        start_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        end_time DATETIME,             -- 公告有效期，NULL表示永久
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )");
+
+    // =========================
+    // 8. 公告已读记录表
+    // =========================
+    $pdo->exec("CREATE TABLE IF NOT EXISTS announcement_reads (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        announcement_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        read_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(announcement_id, user_id)
+    )");
+
+    // =========================
+    // 9. 安全升级：自动补字段（兼容旧版本）
     // =========================
     $columns = $pdo->query("PRAGMA table_info(messages)")->fetchAll(PDO::FETCH_COLUMN, 1);
 
