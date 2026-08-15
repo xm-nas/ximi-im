@@ -966,6 +966,9 @@ async function handleLogin() {
             
             // 4. 【新增】安全执行悬浮框初始化
             initAvatarTooltip();
+            
+            // 5. 【新增】加载公告系统
+            loadAnnouncementsAfterLogin();
         }
         log("登录结果", data);
     } catch (err) { 

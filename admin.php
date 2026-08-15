@@ -44,7 +44,7 @@ if (!$admin_data) {
         if (!empty($pwd)) {
             $hash = password_hash($pwd, PASSWORD_DEFAULT);
             $admin_pdo->prepare("INSERT INTO admin_user (login_key, last_ips, account_status) VALUES (?, ?, 1)")->execute([$hash, '[]']);
-            header('Location: admin.php');
+            header('Location: admipwdn.php');
             exit;
         }
     }
@@ -120,7 +120,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $hash = password_hash($_POST['new_password'], PASSWORD_DEFAULT);
         $admin_pdo->prepare("UPDATE admin_user SET login_key = ? WHERE id = 1")->execute([$hash]);
     }
-if (isset($_POST['save_settings'])) {
+
+    // ========================================================
+    // 公告系统操作
+    // ========================================================
+    if (isset($_POST['action']) && $_POST['action'] === 'create_announcement') {
+        $title = trim($_POST['announcement_title'] ?? '');
+        $content = trim($_POST['announcement_content'] ?? '');
+        $priority = intval($_POST['announcement_priority'] ?? 0);
+        $end_time = trim($_POST['announcement_end_time'] ?? '');
+        
+        if (!empty($title) && !empty($content)) {
+            $stmt = $pdo->prepare("
+                INSERT INTO announcements (title, content, creator_id, priority, end_time, status, start_time, created_at, updated_at)
+                VALUES (?, ?, 1, ?, ?, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ");
+            $stmt->execute([$title, $content, $priority, empty($end_time) ? null : $end_time]);
+        }
+    }
+
+    if (isset($_POST['action']) && $_POST['action'] === 'update_announcement') {
+        $announcement_id = intval($_POST['announcement_id'] ?? 0);
+        $title = trim($_POST['announcement_title'] ?? '');
+        $content = trim($_POST['announcement_content'] ?? '');
+        $priority = intval($_POST['announcement_priority'] ?? 0);
+        $status = trim($_POST['announcement_status'] ?? 'active');
+        $end_time = trim($_POST['announcement_end_time'] ?? '');
+        
+        if ($announcement_id > 0) {
+            $stmt = $pdo->prepare("
+                UPDATE announcements
+                SET title = ?, content = ?, priority = ?, status = ?, end_time = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ");
+            $stmt->execute([$title, $content, $priority, $status, empty($end_time) ? null : $end_time, $announcement_id]);
+        }
+    }
+
+    if (isset($_POST['action']) && $_POST['action'] === 'delete_announcement') {
+        $announcement_id = intval($_POST['announcement_id'] ?? 0);
+        if ($announcement_id > 0) {
+            $pdo->prepare("DELETE FROM announcement_reads WHERE announcement_id = ?")->execute([$announcement_id]);
+            $pdo->prepare("DELETE FROM announcements WHERE id = ?")->execute([$announcement_id]);
+        }
+    }
+
+    if (isset($_POST['save_settings'])) {
         $new_val = $_POST['upload_enabled'] === '1' ? '1' : '0';
         $pdo->prepare("UPDATE settings SET value=? WHERE key='upload_enabled'")->execute([$new_val]);
         
@@ -131,11 +176,11 @@ if (isset($_POST['save_settings'])) {
 
     // 群管理操作
     if (isset($_POST['action'])) {
-if ($_POST['action'] === 'delete_group') {
-    $pdo->prepare("DELETE FROM chat_groups WHERE id = ?")->execute([$_POST['group_id']]);
-    $pdo->prepare("DELETE FROM group_members WHERE group_id = ?")->execute([$_POST['group_id']]);
-    $pdo->prepare("DELETE FROM messages WHERE receiver_id = ? AND msg_type = 'group'")->execute([$_POST['group_id']]);
-}
+        if ($_POST['action'] === 'delete_group') {
+            $pdo->prepare("DELETE FROM chat_groups WHERE id = ?")->execute([$_POST['group_id']]);
+            $pdo->prepare("DELETE FROM group_members WHERE group_id = ?")->execute([$_POST['group_id']]);
+            $pdo->prepare("DELETE FROM messages WHERE receiver_id = ? AND msg_type = 'group'")->execute([$_POST['group_id']]);
+        }
         if ($_POST['action'] === 'add_member') {
             $check = $pdo->prepare("SELECT id FROM group_members WHERE group_id = ? AND user_id = ?");
             $check->execute([$_POST['group_id'], $_POST['user_id']]);
@@ -214,17 +259,16 @@ if ($_POST['action'] === 'delete_group') {
         }
     }
 
-if ($_POST['action'] === 'update_password') {
-
-    $group_id = intval($_POST['group_id']);
-    $pwd = trim($_POST['room_password']);
-
-    $stmt = $pdo->prepare("UPDATE chat_groups SET room_password = ? WHERE id = ?");
-    $stmt->execute([$pwd, $group_id]);
-
-}
-
     if (isset($_POST['clear_all_msgs'])) { $pdo->exec("DELETE FROM messages"); }
+
+    if (isset($_POST['action']) && $_POST['action'] === 'update_password') {
+        $group_id = intval($_POST['group_id'] ?? 0);
+        $pwd = trim($_POST['room_password'] ?? '');
+        if ($group_id > 0 && !empty($pwd)) {
+            $stmt = $pdo->prepare("UPDATE chat_groups SET room_password = ? WHERE id = ?");
+            $stmt->execute([$pwd, $group_id]);
+        }
+    }
     
     header('Location: admin.php'); 
     exit;
@@ -243,7 +287,7 @@ foreach ($user_data as $u) { $user_map[$u['id']] = $u['nickname'] ?: $u['usernam
     <title>系统运维管理后台</title>
     <script>
         function switchTab(target) {
-            ['users', 'msgs', 'groups', 'security'].forEach(id => {
+            ['users', 'msgs', 'groups', 'security', 'announcements'].forEach(id => {
                 document.getElementById('tab-' + id).classList.add('hidden');
                 document.getElementById('btn-' + id).className = 'px-6 py-2 text-gray-500 hover:text-blue-600 transition whitespace-nowrap';
             });
@@ -276,6 +320,7 @@ foreach ($user_data as $u) { $user_map[$u['id']] = $u['nickname'] ?: $u['usernam
             <button id="btn-users" onclick="switchTab('users')" class="px-6 py-2 border-b-2 border-blue-600 font-bold text-blue-600 transition whitespace-nowrap">用户管理</button>
             <button id="btn-msgs" onclick="switchTab('msgs')" class="px-6 py-2 text-gray-500 hover:text-blue-600 transition whitespace-nowrap">消息队列</button>
             <button id="btn-groups" onclick="switchTab('groups')" class="px-6 py-2 text-gray-500 hover:text-blue-600 transition whitespace-nowrap">群组管理</button>
+            <button id="btn-announcements" onclick="switchTab('announcements')" class="px-6 py-2 text-gray-500 hover:text-blue-600 transition whitespace-nowrap">📢 公告系统</button>
             <button id="btn-security" onclick="switchTab('security')" class="px-6 py-2 text-gray-500 hover:text-blue-600 transition whitespace-nowrap">安全中心</button>
         </div>
 
@@ -575,6 +620,100 @@ while ($row = $stmt_members->fetch(PDO::FETCH_ASSOC)) {
             </div>
         </div>
 
+        <!-- 公告管理标签页 -->
+        <div id="tab-announcements" class="hidden space-y-4">
+            <form method="POST" id="announcementForm" class="p-4 bg-blue-50 border border-blue-200 rounded-lg shadow-sm space-y-4">
+                <input type="hidden" name="action" value="create_announcement">
+                <input type="hidden" name="announcement_id" value="">
+                
+                <h3 class="font-bold text-lg text-gray-800">创建/编辑公告</h3>
+                
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">公告标题</label>
+                    <input type="text" name="announcement_title" required placeholder="输入公告标题" class="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">公告内容</label>
+                    <textarea name="announcement_content" required placeholder="输入公告内容" rows="5" class="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:outline-none"></textarea>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">优先级</label>
+                        <input type="number" name="announcement_priority" value="0" min="0" class="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:outline-none" placeholder="数字越大越靠前">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">状态</label>
+                        <select name="announcement_status" class="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                            <option value="active">📢 发布中</option>
+                            <option value="inactive">❌ 已下线</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">有效期至</label>
+                        <input type="datetime-local" name="announcement_end_time" class="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:outline-none" placeholder="留空表示永久有效">
+                    </div>
+                </div>
+
+                <div class="flex gap-2">
+                    <button type="submit" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition font-medium">创建公告</button>
+                    <button type="button" onclick="document.getElementById('announcementForm').reset(); document.querySelector('[name=\"action\"]').value = 'create_announcement';" class="bg-gray-300 text-gray-700 px-6 py-2 rounded-lg hover:bg-gray-400 transition font-medium">清空</button>
+                </div>
+            </form>
+
+            <!-- 公告列表 -->
+            <div class="space-y-3">
+                <h3 class="font-bold text-lg text-gray-800">所有公告</h3>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm text-left border text-gray-700 whitespace-nowrap">
+                        <thead class="bg-gray-100 border-b">
+                            <tr>
+                                <th class="p-3">ID</th>
+                                <th class="p-3">标题</th>
+                                <th class="p-3">内容预览</th>
+                                <th class="p-3">优先级</th>
+                                <th class="p-3">状态</th>
+                                <th class="p-3">创建时间</th>
+                                <th class="p-3">有效期至</th>
+                                <th class="p-3">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php
+                            try {
+                                $announcements = $pdo->query("SELECT * FROM announcements ORDER BY priority DESC, created_at DESC")->fetchAll(PDO::FETCH_ASSOC);
+                                foreach ($announcements as $ann):
+                            ?>
+                            <tr class="border-b hover:bg-gray-50">
+                                <td class="p-3 font-mono text-gray-500"><?= htmlspecialchars($ann['id']) ?></td>
+                                <td class="p-3 font-bold"><?= htmlspecialchars($ann['title']) ?></td>
+                                <td class="p-3 text-gray-600 truncate max-w-xs"><?= htmlspecialchars(substr($ann['content'], 0, 50)) ?>...</td>
+                                <td class="p-3 text-center"><span class="bg-orange-100 text-orange-700 px-2 py-1 rounded text-xs font-bold"><?= $ann['priority'] ?></span></td>
+                                <td class="p-3">
+                                    <span class="px-2 py-1 rounded text-xs font-bold <?= $ann['status'] === 'active' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700' ?>">
+                                        <?= $ann['status'] === 'active' ? '📢 发布中' : '❌ 已下线' ?>
+                                    </span>
+                                </td>
+                                <td class="p-3 text-gray-500 text-xs"><?= htmlspecialchars($ann['created_at']) ?></td>
+                                <td class="p-3 text-gray-500 text-xs"><?= $ann['end_time'] ? htmlspecialchars($ann['end_time']) : '永久' ?></td>
+                                <td class="p-3 space-x-2">
+                                    <button type="button" onclick="editAnnouncement(<?= $ann['id'] ?>, '<?= htmlspecialchars(addslashes($ann['title'])) ?>', '<?= htmlspecialchars(addslashes($ann['content'])) ?>', <?= $ann['priority'] ?>, '<?= $ann['status'] ?>', '<?= htmlspecialchars($ann['end_time'] ?? '') ?>')" class="bg-blue-500 text-white px-3 py-1 rounded text-xs hover:bg-blue-600 transition">编辑</button>
+                                    <button type="button" onclick="deleteAnnouncement(<?= $ann['id'] ?>)" class="bg-red-500 text-white px-3 py-1 rounded text-xs hover:bg-red-600 transition">删除</button>
+                                </td>
+                            </tr>
+                            <?php
+                                endforeach;
+                            } catch (Exception $e) {
+                                echo '<tr><td colspan="8" class="p-3 text-center text-gray-500">公告表未初始化，请刷新页面</td></tr>';
+                            }
+                            ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
     </div>
 <script>
 function toggleGroup(id) {
@@ -582,6 +721,42 @@ function toggleGroup(id) {
     el.classList.toggle('hidden');
 }
 
+        // 公告系统相关函数
+        function showAnnouncementForm(isEdit = false, announcementId = null) {
+            if (!isEdit) {
+                document.getElementById('announcementForm').reset();
+                document.querySelector('input[name="announcement_id"]').value = '';
+                document.querySelector('button[type="submit"]').textContent = '创建公告';
+                document.querySelector('[name="action"]').value = 'create_announcement';
+            }
+        }
+
+        function editAnnouncement(id, title, content, priority, status, endTime) {
+            showAnnouncementForm(true);
+            document.querySelector('input[name="announcement_id"]').value = id;
+            document.querySelector('input[name="announcement_title"]').value = title;
+            document.querySelector('textarea[name="announcement_content"]').value = content;
+            document.querySelector('input[name="announcement_priority"]').value = priority;
+            document.querySelector('select[name="announcement_status"]').value = status;
+            document.querySelector('input[name="announcement_end_time"]').value = endTime || '';
+            document.querySelector('button[type="submit"]').textContent = '更新公告';
+            document.querySelector('[name="action"]').value = 'update_announcement';
+            // 滚动到表单
+            document.getElementById('announcementForm').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function deleteAnnouncement(id) {
+            if (confirm('确定删除该公告吗？')) {
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.innerHTML = `
+                    <input type="hidden" name="action" value="delete_announcement">
+                    <input type="hidden" name="announcement_id" value="${id}">
+                `;
+                document.body.appendChild(form);
+                form.submit();
+            }
+        }
 </script>
 </body>
 </html>
